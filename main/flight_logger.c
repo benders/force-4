@@ -26,6 +26,10 @@ static volatile int flight_count = 0;
 
 // Ring buffer for pre-trigger data
 static adxl375_sample_t pre_buf[PRE_BUF_SIZE];
+
+// Static buffers to keep large arrays off the task stack
+static adxl375_sample_t s_samples[32];
+static adxl375_sample_t s_write_buf[WRITE_BUF_FLUSH];
 static int pre_buf_head = 0;
 static int pre_buf_count = 0;
 
@@ -68,8 +72,8 @@ void flight_task(void *pvParameters)
     // Subscribe to task watchdog
     esp_task_wdt_add(NULL);
 
-    adxl375_sample_t samples[32];
-    adxl375_sample_t write_buf[WRITE_BUF_FLUSH];
+    adxl375_sample_t *samples = s_samples;
+    adxl375_sample_t *write_buf = s_write_buf;
     int write_buf_count = 0;
 
     int launch_count = 0;

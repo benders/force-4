@@ -1,6 +1,8 @@
 #include "adxl375.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 
 static const char *TAG = "adxl375";
@@ -78,6 +80,23 @@ static bool configure_sensor(void)
     return true;
 }
 
+/* Scan the bus to find any responding device and log what we find. */
+static void i2c_scan(void)
+{
+    ESP_LOGI(TAG, "Scanning I2C bus...");
+    int found = 0;
+    for (uint8_t addr = 0x08; addr < 0x78; addr++) {
+        esp_err_t err = i2c_master_probe(bus_handle, addr, 20);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "  Found device at 0x%02X", addr);
+            found++;
+        }
+    }
+    if (found == 0) {
+        ESP_LOGW(TAG, "  No I2C devices found — check wiring/power");
+    }
+}
+
 bool adxl375_init(gpio_num_t sda, gpio_num_t scl)
 {
     i2c_master_bus_config_t bus_cfg = {
@@ -94,9 +113,29 @@ bool adxl375_init(gpio_num_t sda, gpio_num_t scl)
         return false;
     }
 
+    // Reset bus to free any device holding SDA low from a prior session
+    i2c_master_bus_reset(bus_handle);
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    // Probe for the ADXL375: try primary addr 0x53, fallback to 0x1D
+    uint8_t found_addr = 0;
+    uint8_t candidates[] = {0x53, 0x1D};
+    for (int i = 0; i < 2; i++) {
+        if (i2c_master_probe(bus_handle, candidates[i], 20) == ESP_OK) {
+            found_addr = candidates[i];
+            ESP_LOGI(TAG, "ADXL375 found at 0x%02X", found_addr);
+            break;
+        }
+    }
+    if (found_addr == 0) {
+        ESP_LOGE(TAG, "ADXL375 not found at 0x53 or 0x1D");
+        i2c_scan();
+        return false;
+    }
+
     i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = ADXL375_ADDR,
+        .device_address = found_addr,
         .scl_speed_hz = 400000,
     };
     err = i2c_master_bus_add_device(bus_handle, &dev_cfg, &dev_handle);

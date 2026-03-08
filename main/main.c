@@ -15,11 +15,12 @@
 
 static const char *TAG = "main";
 
-#define GPIO_BOOT_MODE  GPIO_NUM_10
-#define GPIO_SDA        GPIO_NUM_4
-#define GPIO_SCL        GPIO_NUM_5
+// XIAO ESP32-S3: D10=GPIO9, D4=GPIO5 (SDA), D5=GPIO6 (SCL)
+#define GPIO_BOOT_MODE  GPIO_NUM_9
+#define GPIO_SDA        GPIO_NUM_5
+#define GPIO_SCL        GPIO_NUM_6
 
-#define FLIGHT_TASK_STACK  8192
+#define FLIGHT_TASK_STACK  4096
 #define SERIAL_TASK_STACK  4096
 
 static bool g_flight_mode = true;

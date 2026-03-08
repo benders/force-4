@@ -1,0 +1,130 @@
+#include "storage.h"
+#include "esp_spiffs.h"
+#include "esp_log.h"
+#include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <errno.h>
+
+static const char *TAG = "storage";
+static const char *MOUNT_POINT = "/spiffs";
+
+bool storage_init(void)
+{
+    esp_vfs_spiffs_conf_t conf = {
+        .base_path = MOUNT_POINT,
+        .partition_label = "storage",
+        .max_files = 5,
+        .format_if_mount_failed = true,
+    };
+
+    esp_err_t err = esp_vfs_spiffs_register(&conf);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "SPIFFS mount failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    size_t total = 0, used = 0;
+    esp_spiffs_info("storage", &total, &used);
+    ESP_LOGI(TAG, "SPIFFS mounted: %zu total, %zu used, %zu free",
+             total, used, total - used);
+    return true;
+}
+
+int storage_next_flight_number(void)
+{
+    DIR *dir = opendir(MOUNT_POINT);
+    if (!dir) return 0;
+
+    int max_n = -1;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        int n;
+        if (sscanf(ent->d_name, "flight_%d.csv", &n) == 1) {
+            if (n > max_n) max_n = n;
+        }
+    }
+    closedir(dir);
+    return max_n + 1;
+}
+
+FILE *storage_open_flight(int n)
+{
+    char path[48];
+    snprintf(path, sizeof(path), "%s/flight_%03d.csv", MOUNT_POINT, n);
+
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open %s: %s", path, strerror(errno));
+        return NULL;
+    }
+
+    fprintf(f, "timestamp_ns,ax_g,ay_g,az_g\n");
+    fflush(f);
+    ESP_LOGI(TAG, "Opened %s for writing", path);
+    return f;
+}
+
+void storage_write_samples(FILE *f, const adxl375_sample_t *samples, int count)
+{
+    if (!f) return;
+    for (int i = 0; i < count; i++) {
+        // Convert microseconds to nanoseconds for CSV
+        int64_t ts_ns = samples[i].timestamp_us * 1000LL;
+        fprintf(f, "%lld,%.4f,%.4f,%.4f\n",
+                (long long)ts_ns,
+                samples[i].ax_g, samples[i].ay_g, samples[i].az_g);
+    }
+}
+
+void storage_close_flight(FILE *f)
+{
+    if (!f) return;
+    fflush(f);
+    fclose(f);
+    ESP_LOGI(TAG, "Flight file closed");
+}
+
+size_t storage_free_space(void)
+{
+    size_t total = 0, used = 0;
+    esp_spiffs_info("storage", &total, &used);
+    return total - used;
+}
+
+void storage_list_flights(void)
+{
+    DIR *dir = opendir(MOUNT_POINT);
+    if (!dir) {
+        printf("No flights.\n");
+        return;
+    }
+
+    struct dirent *ent;
+    int count = 0;
+    while ((ent = readdir(dir)) != NULL) {
+        char path[280];
+        snprintf(path, sizeof(path), "%s/%s", MOUNT_POINT, ent->d_name);
+        struct stat st;
+        if (stat(path, &st) == 0) {
+            printf("%s  %ld\n", ent->d_name, (long)st.st_size);
+            count++;
+        }
+    }
+    closedir(dir);
+    if (count == 0) {
+        printf("No flights.\n");
+    }
+}
+
+bool storage_delete_file(const char *filename)
+{
+    char path[48];
+    snprintf(path, sizeof(path), "%s/%s", MOUNT_POINT, filename);
+    if (remove(path) == 0) {
+        ESP_LOGI(TAG, "Deleted %s", path);
+        return true;
+    }
+    ESP_LOGE(TAG, "Failed to delete %s: %s", path, strerror(errno));
+    return false;
+}

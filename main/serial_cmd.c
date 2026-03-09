@@ -55,8 +55,8 @@ static void cmd_cat(const char *filename)
 
 static void cmd_rm(const char *filename)
 {
-    if (flight_mode) {
-        printf("denied: flight mode\n");
+    if (flight_mode && flight_logger_get_state() != FLIGHT_STATE_TRANSFER) {
+        printf("denied: flight mode (send 'transfer' first)\n");
         return;
     }
     if (!filename || *filename == '\0') {
@@ -84,7 +84,7 @@ static void cmd_help(void)
     printf("Commands:\n");
     printf("  ls              List flight files\n");
     printf("  cat <filename>  Print file contents\n");
-    printf("  rm <filename>   Delete file (data mode only)\n");
+    printf("  rm <filename>   Delete file (requires transfer state)\n");
     printf("  status          Show system status\n");
     printf("  transfer        Pause logging; show transfer LED pattern\n");
     printf("  ping            Connection test\n");
@@ -145,7 +145,7 @@ void serial_cmd_task(void *pvParameters)
     // ESP_LOGI bypasses stdio (always unbuffered), but plain printf() is not.
     setvbuf(stdout, NULL, _IONBF, 0);
 
-    // Machine-parseable ready marker (data.sh waits for this)
+    // Machine-parseable ready marker (useful for manual monitoring)
     printf("FORCE4:READY\n");
     fflush(stdout);
 

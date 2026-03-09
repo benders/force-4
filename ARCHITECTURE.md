@@ -42,7 +42,7 @@ TRANSFER <--(serial "transfer" cmd)                    any state
 
 Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_serial_jtag_driver_install()` + `usb_serial_jtag_vfs_use_driver()` for `printf`/`getchar` to work.
 
-- Boot marker: `FORCE4:READY\n` (machine-parseable, data.sh waits for this)
+- Boot marker: `FORCE4:READY\n` (printed at startup for diagnostics; data.sh does not wait for it)
 - Response framing: `---BEGIN---\n` ... `---END---\n` around every command response
 - Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `transfer`, `ping`, `help`
 

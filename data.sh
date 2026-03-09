@@ -12,18 +12,13 @@ fi
 
 # Send a command over serial and capture the response.
 #
-# The XIAO ESP32-S3 has a hardware auto-reset circuit (DTR -> RESET via RC)
-# that reboots the board whenever the serial port is opened.
-# We accept this: wait for the board to finish booting, then send the command.
+# The board is already running when we open the port — no DTR reset occurs
+# on XIAO ESP32-S3 over USB Serial/JTAG.
 #
-# The firmware prints "FORCE4:READY" when the serial command handler is ready,
-# and frames command responses with ---BEGIN--- / ---END--- markers.
+# The firmware frames command responses with ---BEGIN--- / ---END--- markers.
 #
 # Before sending the real command, we send "transfer" to pause flight logging
 # and activate the data-transfer LED pattern (double-blink).
-#
-# Note: this means every data.sh invocation reboots the board and interrupts
-# any active flight recording. Use data.sh only after landing.
 send_cmd() {
   python3 -c "
 import serial, sys, time
@@ -34,29 +29,7 @@ timeout = float(sys.argv[3]) if len(sys.argv) > 3 else 4.0
 
 ser = serial.Serial(port, 115200, timeout=0.1)
 
-# Opening the port triggers a hardware reset via DTR on XIAO ESP32-S3.
-# Wait for FORCE4:READY marker (serial_cmd_task is ready for input).
-boot_buf = b''
-boot_deadline = time.time() + 8.0
-ready = False
-while time.time() < boot_deadline:
-    chunk = ser.read(4096)
-    if chunk:
-        boot_buf += chunk
-        if b'FORCE4:READY' in boot_buf:
-            ready = True
-            break
-    time.sleep(0.01)
-
-if not ready:
-    # Fallback: wait for silence after receiving some boot output
-    if boot_buf:
-        time.sleep(1.0)
-    else:
-        sys.stderr.write('Warning: no boot output received\n')
-        time.sleep(3.0)
-
-# Give the getchar() loop a moment to start, then clear stale data
+# Board is already running; wait briefly and discard any pending output.
 time.sleep(0.2)
 ser.reset_input_buffer()
 
@@ -150,7 +123,13 @@ case "${1:-}" in
         echo "Aborted."
         exit 0
       fi
-      send_cmd "rm $FILE" "$PORT" 4
+      RESULT=$(send_cmd "rm $FILE" "$PORT" 4)
+      if echo "$RESULT" | grep -qi "denied\|error"; then
+        echo "FAILED: $RESULT"
+        exit 1
+      else
+        echo "Deleted $FILE"
+      fi
     else
       echo "Listing files..."
       FILES=$(send_cmd "ls" "$PORT" 4 | grep 'flight_' | awk '{print $1}' | tr -d '\r')
@@ -164,10 +143,61 @@ case "${1:-}" in
         echo "Aborted."
         exit 0
       fi
-      for f in $FILES; do
-        send_cmd "rm $f" "$PORT" 4
-        echo "Deleted $f"
-      done
+      # Delete all files in a single serial session to avoid reconnect issues.
+      python3 -c "
+import serial, sys, time
+
+files = sys.argv[1].split()
+port  = sys.argv[2]
+
+def read_response(ser, timeout=4.0):
+    buf = b''
+    deadline = time.time() + timeout
+    last_rx   = time.time()
+    while time.time() < deadline:
+        chunk = ser.read(4096)
+        if chunk:
+            buf     += chunk
+            last_rx  = time.time()
+            if b'---END---' in buf:
+                break
+            deadline = max(deadline, last_rx + 0.5)
+        elif time.time() - last_rx > 0.8:
+            break
+        time.sleep(0.01)
+    text  = buf.decode(errors='replace')
+    begin = text.find('---BEGIN---')
+    end   = text.find('---END---')
+    if begin >= 0:
+        return text[begin + 11 : end if end >= 0 else len(text)].strip()
+    return text.strip()
+
+ser = serial.Serial(port, 115200, timeout=0.1)
+time.sleep(0.2)
+ser.reset_input_buffer()
+
+ser.write(b'transfer\r\n')
+ser.flush()
+read_response(ser, timeout=3.0)
+time.sleep(0.1)
+ser.reset_input_buffer()
+
+ok = True
+for f in files:
+    ser.write(('rm ' + f + '\r\n').encode())
+    ser.flush()
+    result = read_response(ser)
+    if 'denied' in result.lower() or 'error' in result.lower():
+        print('FAILED {}: {}'.format(f, result))
+        ok = False
+    else:
+        print('Deleted {}'.format(f))
+    time.sleep(0.1)
+    ser.reset_input_buffer()
+
+ser.close()
+sys.exit(0 if ok else 1)
+" "$FILES" "$PORT"
     fi
     ;;
 

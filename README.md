@@ -39,8 +39,8 @@ Requires `esptool.py` on the host (`pip install esptool`).
 
 ### Boot modes
 
-- **D10 floating (default):** Flight mode -- LED breathes, logger armed, `rm` disabled
-- **D10 grounded:** Data mode -- no logging, `rm` enabled
+- **D10 floating (default):** Flight mode -- LED breathes, logger armed
+- **D10 grounded:** Data mode -- no logging
 
 ### LED patterns
 
@@ -62,13 +62,13 @@ The logger continuously monitors acceleration magnitude. When it exceeds 3g for 
 ./data.sh df            # show storage usage and flight list
 ./data.sh pull          # download most recent flight
 ./data.sh pull flight_001.csv  # download specific file
-./data.sh wipe          # delete all flights (data mode only)
+./data.sh wipe          # delete all flights
 ./data.sh wipe flight_001.csv  # delete specific file
 ```
 
 Requires `pyserial` (`pip install pyserial`).
 
-Each `data.sh` invocation reboots the board (hardware DTR reset). Use only after landing.
+No DTR reset occurs on XIAO ESP32-S3 over USB Serial/JTAG — the board keeps running when the port is opened. `data.sh` sends a `transfer` command to pause flight logging before any operation.
 
 ## Plot
 

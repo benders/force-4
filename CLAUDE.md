@@ -27,7 +27,7 @@ The XIAO ESP32-S3 wires USB to the **USB Serial/JTAG controller**, NOT USB-OTG.
 - `serial_cmd_task` prints `FORCE4:READY\n` when ready for input
 - Every command response is wrapped in `---BEGIN---\n` / `---END---\n`
 - `data.sh` sends `transfer` command before every operation to pause flight logging and activate double-blink LED
-- Opening the serial port triggers hardware DTR reset (board reboots)
+- Opening the serial port does NOT trigger a DTR reset on XIAO ESP32-S3 over USB Serial/JTAG — the board continues running
 
 ## CSV format (must match force-3)
 

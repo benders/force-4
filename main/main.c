@@ -3,6 +3,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
+#include "driver/usb_serial_jtag.h"
+#include "driver/usb_serial_jtag_vfs.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
@@ -28,6 +30,14 @@ static bool g_flight_mode = true;
 void app_main(void)
 {
     ESP_LOGI(TAG, "Force-4 booting");
+
+    // Install USB Serial/JTAG driver so stdin/stdout work bidirectionally
+    usb_serial_jtag_driver_config_t usb_cfg = {
+        .rx_buffer_size = 1024,
+        .tx_buffer_size = 1024,
+    };
+    usb_serial_jtag_driver_install(&usb_cfg);
+    usb_serial_jtag_vfs_use_driver();
 
     // Read boot mode from GPIO10 (internal pull-up, LOW = data mode)
     gpio_config_t io_conf = {

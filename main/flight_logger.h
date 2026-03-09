@@ -4,6 +4,7 @@ typedef enum {
     FLIGHT_STATE_IDLE,
     FLIGHT_STATE_LOGGING,
     FLIGHT_STATE_COOLDOWN,
+    FLIGHT_STATE_TRANSFER,  // data transfer in progress, logging paused
 } flight_state_t;
 
 /**
@@ -15,6 +16,12 @@ flight_state_t flight_logger_get_state(void);
  * Get total number of flights recorded this session.
  */
 int flight_logger_get_flight_count(void);
+
+/**
+ * Pause flight logging and enter data-transfer mode.
+ * Call from serial_cmd when the host data script connects.
+ */
+void flight_logger_enter_transfer(void);
 
 /**
  * Flight logger FreeRTOS task. Pin to core 1.

@@ -58,6 +58,14 @@ void led_flash_update(float t_s)
     led_set(on ? LEDC_MAX_DUTY : 0);
 }
 
+void led_transfer_update(float t_s)
+{
+    // Double-blink every 2s: ON-OFF-ON-OFF(long)
+    float phase = fmodf(t_s, 2.0f);
+    int on = (phase < 0.12f) || (phase >= 0.25f && phase < 0.37f);
+    led_set(on ? LEDC_MAX_DUTY : 0);
+}
+
 void led_blink_n(int count)
 {
     for (int i = 0; i < count; i++) {

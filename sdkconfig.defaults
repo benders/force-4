@@ -3,8 +3,10 @@ CONFIG_IDF_TARGET="esp32s3"
 # Flash size
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 
-# USB CDC console
-CONFIG_ESP_CONSOLE_USB_CDC=y
+# Console via built-in USB Serial/JTAG controller (hardware CDC-ACM).
+# NOT USB_CDC (TinyUSB/OTG) — the XIAO ESP32-S3 wires USB to the
+# Serial/JTAG controller, so USB_CDC has broken stdin.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # Partition table
 CONFIG_PARTITION_TABLE_CUSTOM=y

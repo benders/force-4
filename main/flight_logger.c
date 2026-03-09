@@ -65,6 +65,11 @@ int flight_logger_get_flight_count(void)
     return flight_count;
 }
 
+void flight_logger_enter_transfer(void)
+{
+    state = FLIGHT_STATE_TRANSFER;
+}
+
 void flight_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -94,6 +99,8 @@ void flight_task(void *pvParameters)
                 led_breathe_update(t_s);
             } else if (state == FLIGHT_STATE_LOGGING) {
                 led_flash_update(t_s);
+            } else if (state == FLIGHT_STATE_TRANSFER) {
+                led_transfer_update(t_s);
             }
             vTaskDelay(pdMS_TO_TICKS(2));
             continue;
@@ -171,6 +178,11 @@ void flight_task(void *pvParameters)
 
         case FLIGHT_STATE_COOLDOWN:
             // Handled inline above after transition
+            break;
+
+        case FLIGHT_STATE_TRANSFER:
+            led_transfer_update(t_s);
+            vTaskDelay(pdMS_TO_TICKS(20));
             break;
         }
     }

@@ -82,6 +82,8 @@ static void cmd_help(void)
     printf("  cat <filename>  Print file contents\n");
     printf("  rm <filename>   Delete file (data mode only)\n");
     printf("  status          Show system status\n");
+    printf("  transfer        Pause logging; show transfer LED pattern\n");
+    printf("  ping            Connection test\n");
     printf("  help            Show this help\n");
 }
 
@@ -102,6 +104,8 @@ static void process_line(char *line)
         while (*arg == ' ') arg++;
     }
 
+    printf("---BEGIN---\n");
+
     if (strcmp(line, "ls") == 0) {
         cmd_ls();
     } else if (strcmp(line, "cat") == 0) {
@@ -110,11 +114,18 @@ static void process_line(char *line)
         cmd_rm(arg);
     } else if (strcmp(line, "status") == 0) {
         cmd_status();
+    } else if (strcmp(line, "transfer") == 0) {
+        flight_logger_enter_transfer();
+        printf("ok\n");
+    } else if (strcmp(line, "ping") == 0) {
+        printf("pong\n");
     } else if (strcmp(line, "help") == 0) {
         cmd_help();
     } else {
         printf("Unknown command: %s (type 'help')\n", line);
     }
+
+    printf("---END---\n");
 }
 
 void serial_cmd_task(void *pvParameters)
@@ -125,6 +136,14 @@ void serial_cmd_task(void *pvParameters)
 
     ESP_LOGI(TAG, "Serial command handler started (mode=%s)",
              flight_mode ? "flight" : "data");
+
+    // Disable stdio buffering on stdout so printf output is sent immediately.
+    // ESP_LOGI bypasses stdio (always unbuffered), but plain printf() is not.
+    setvbuf(stdout, NULL, _IONBF, 0);
+
+    // Machine-parseable ready marker (data.sh waits for this)
+    printf("FORCE4:READY\n");
+    fflush(stdout);
 
     char line[128];
     int pos = 0;
@@ -139,7 +158,9 @@ void serial_cmd_task(void *pvParameters)
         if (c == '\n' || c == '\r') {
             if (pos > 0) {
                 line[pos] = '\0';
+                ESP_LOGI(TAG, "cmd: %s", line);
                 process_line(line);
+                fflush(stdout);
                 pos = 0;
             }
         } else if (pos < (int)sizeof(line) - 1) {

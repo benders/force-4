@@ -18,7 +18,7 @@ static const char *TAG = "flight";
 #define LAUNCH_HOLD_SAMPLES 20      // 50ms at 400Hz
 #define PRE_BUF_SIZE        800     // 2s * 400Hz
 #define RECORD_DURATION_US  (60 * 1000000LL)
-#define IDLE_COOLDOWN_MS    10000
+#define IDLE_COOLDOWN_MS    3000
 #define WRITE_BUF_FLUSH     256
 
 static volatile flight_state_t state = FLIGHT_STATE_IDLE;

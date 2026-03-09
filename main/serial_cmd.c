@@ -43,8 +43,12 @@ static void cmd_cat(const char *filename)
     }
 
     char line[128];
+    int count = 0;
     while (fgets(line, sizeof(line), f)) {
         fputs(line, stdout);
+        if (++count % 256 == 0) {
+            vTaskDelay(1); /* yield to IDLE so it can reset its WDT subscription */
+        }
     }
     fclose(f);
 }

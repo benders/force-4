@@ -15,9 +15,10 @@ static bool flight_mode = true;
 static const char *state_name(flight_state_t s)
 {
     switch (s) {
-    case FLIGHT_STATE_IDLE:     return "idle";
-    case FLIGHT_STATE_LOGGING:  return "logging";
-    case FLIGHT_STATE_COOLDOWN: return "cooldown";
+    case FLIGHT_STATE_IDLE:     return "FLIGHT_STATE_IDLE";
+    case FLIGHT_STATE_LOGGING:  return "FLIGHT_STATE_LOGGING";
+    case FLIGHT_STATE_COOLDOWN: return "FLIGHT_STATE_COOLDOWN";
+    case FLIGHT_STATE_TRANSFER: return "FLIGHT_STATE_TRANSFER";
     default:                    return "unknown";
     }
 }
@@ -87,6 +88,7 @@ static void cmd_help(void)
     printf("  rm <filename>   Delete file (requires transfer state)\n");
     printf("  status          Show system status\n");
     printf("  transfer        Pause logging; show transfer LED pattern\n");
+    printf("  resume          Exit transfer mode; return to IDLE\n");
     printf("  ping            Connection test\n");
     printf("  help            Show this help\n");
 }
@@ -120,6 +122,9 @@ static void process_line(char *line)
         cmd_status();
     } else if (strcmp(line, "transfer") == 0) {
         flight_logger_enter_transfer();
+        printf("ok\n");
+    } else if (strcmp(line, "resume") == 0) {
+        flight_logger_exit_transfer();
         printf("ok\n");
     } else if (strcmp(line, "ping") == 0) {
         printf("pong\n");

@@ -24,6 +24,13 @@ int flight_logger_get_flight_count(void);
 void flight_logger_enter_transfer(void);
 
 /**
+ * Exit data-transfer mode and return to IDLE (flight ready).
+ * Safe to call from any task; the actual transition happens in flight_task.
+ * Also triggered automatically after TRANSFER_TIMEOUT_S seconds.
+ */
+void flight_logger_exit_transfer(void);
+
+/**
  * Flight logger FreeRTOS task. Pin to core 1.
  * pvParameters unused.
  */

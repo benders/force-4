@@ -70,6 +70,19 @@ while time.time() < deadline:
         break
     time.sleep(0.01)
 
+# Send resume to return device to IDLE (flight ready) state
+ser.write(b'resume\r\n')
+ser.flush()
+resume_buf = b''
+resume_deadline = time.time() + 2.0
+while time.time() < resume_deadline:
+    chunk = ser.read(4096)
+    if chunk:
+        resume_buf += chunk
+        if b'---END---' in resume_buf:
+            break
+    time.sleep(0.01)
+
 ser.close()
 
 # Extract content between ---BEGIN--- and ---END--- markers
@@ -81,6 +94,53 @@ if begin >= 0:
     sys.stdout.write(content.strip() + '\n')
 elif text.strip():
     # No markers found — print raw (might be ESP_LOGI or error)
+    sys.stderr.write('Warning: no response markers found\n')
+    sys.stdout.write(text.strip() + '\n')
+else:
+    sys.stderr.write('Error: no response from device\n')
+    sys.exit(1)
+" "$@"
+}
+
+# Send a single command with no transfer/resume — does not change device state.
+query_state() {
+  python3 -c "
+import serial, sys, time
+
+port    = sys.argv[1]
+timeout = float(sys.argv[2]) if len(sys.argv) > 2 else 4.0
+
+ser = serial.Serial(port, 115200, timeout=0.1)
+time.sleep(0.2)
+ser.reset_input_buffer()
+
+ser.write(b'status\r\n')
+ser.flush()
+
+buf      = b''
+deadline = time.time() + timeout
+last_rx  = time.time()
+while time.time() < deadline:
+    chunk = ser.read(4096)
+    if chunk:
+        buf     += chunk
+        last_rx  = time.time()
+        if b'---END---' in buf:
+            break
+        deadline = max(deadline, last_rx + 0.5)
+    elif time.time() - last_rx > 0.8:
+        break
+    time.sleep(0.01)
+
+ser.close()
+
+text  = buf.decode(errors='replace')
+begin = text.find('---BEGIN---')
+end   = text.find('---END---')
+if begin >= 0:
+    content = text[begin + 11:end if end >= 0 else len(text)]
+    sys.stdout.write(content.strip() + '\n')
+elif text.strip():
     sys.stderr.write('Warning: no response markers found\n')
     sys.stdout.write(text.strip() + '\n')
 else:
@@ -197,10 +257,27 @@ for f in files:
     time.sleep(0.1)
     ser.reset_input_buffer()
 
+# Return device to IDLE (flight ready) state
+ser.write(b'resume\r\n')
+ser.flush()
+resume_buf = b''
+resume_deadline = time.time() + 2.0
+while time.time() < resume_deadline:
+    chunk = ser.read(4096)
+    if chunk:
+        resume_buf += chunk
+        if b'---END---' in resume_buf:
+            break
+    time.sleep(0.01)
+
 ser.close()
 sys.exit(0 if ok else 1)
 " "$FILES" "$PORT"
     fi
+    ;;
+
+  state)
+    query_state "$PORT" 4
     ;;
 
   diag)
@@ -242,6 +319,7 @@ sys.exit(0 if ok else 1)
     echo "  pull [file]   Download a flight CSV (default: most recent)"
     echo "  df            Show storage usage and list flights"
     echo "  wipe [file]   Delete flight data (default: all)"
+    echo "  state         Show device state without changing it"
     echo "  diag          Run device health diagnostics"
     exit 1
     ;;

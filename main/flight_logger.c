@@ -29,6 +29,11 @@ static const char *TAG = "flight";
 static volatile flight_state_t state = FLIGHT_STATE_IDLE;
 static volatile int flight_count = 0;
 
+// Transfer-mode exit: set by flight_logger_exit_transfer() or on timeout.
+#define TRANSFER_TIMEOUT_US  (30LL * 1000000LL)
+static volatile bool s_exit_transfer = false;
+static int64_t s_transfer_entry_us = 0;
+
 // Pre-trigger ring buffer
 static adxl375_sample_t pre_buf[PRE_BUF_SIZE];
 static int pre_buf_head = 0;
@@ -103,7 +108,14 @@ void flight_logger_enter_transfer(void)
         fclose(flight_file);
         flight_file = NULL;
     }
+    s_exit_transfer = false;
+    s_transfer_entry_us = esp_timer_get_time();
     state = FLIGHT_STATE_TRANSFER;
+}
+
+void flight_logger_exit_transfer(void)
+{
+    s_exit_transfer = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,7 +290,17 @@ void flight_task(void *pvParameters)
 
         case FLIGHT_STATE_TRANSFER:
             led_transfer_update(t_s);
-            vTaskDelay(pdMS_TO_TICKS(20));
+
+            if (s_exit_transfer ||
+                (esp_timer_get_time() - s_transfer_entry_us) >= TRANSFER_TIMEOUT_US) {
+                s_exit_transfer = false;
+                ESP_LOGI(TAG, "Exiting transfer mode, returning to IDLE");
+                prepare_idle_file();
+                launch_count = 0;
+                state = FLIGHT_STATE_IDLE;
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(20));
+            }
             break;
         }
     }

@@ -4,12 +4,13 @@ ESP-IDF v5.4 application running two FreeRTOS tasks on an ESP32-S3.
 
 ## Tasks
 
-| Task               | Core       | Priority | Stack | Role                                        |
-|--------------------|------------|----------|-------|---------------------------------------------|
-| `flight_task`      | 1 (pinned) | 5        | 4096  | Sensor polling, state machine, file writing  |
+| Task               | Core       | Priority | Stack | Role                                         |
+|--------------------|------------|----------|-------|----------------------------------------------|
+| `flight_task`      | 1 (pinned) | 5        | 4096  | Sensor polling, state machine, launch detect |
+| `log_write_task`   | 0 (pinned) | 5        | 4096  | SPIFFS writes (decoupled from FIFO reads)    |
 | `serial_cmd_task`  | any        | 3        | 4096  | Serial command handler (stdin/stdout)        |
 
-`flight_task` only runs in flight mode. `serial_cmd_task` runs in both modes.
+`flight_task` and `log_write_task` only run in flight mode. `serial_cmd_task` runs in both modes.
 
 ## Modules
 
@@ -25,18 +26,19 @@ led.c/.h          LEDC PWM patterns (breathe, flash, transfer, blink)
 ## State machine
 
 ```
-IDLE --(|a| > 3g for 50ms)--> LOGGING --(60s)--> COOLDOWN --(10s)--> IDLE
-                                                      \
-TRANSFER <--(serial "transfer" cmd)                    any state
+IDLE --(|a| > 3g for 50ms)--> LOGGING --(60s)--> COOLDOWN --(3s)--> IDLE
+  ^                                                                    |
+  |                  "transfer" cmd (from any IDLE state)             |
+  +----------- "resume" cmd or 30s timeout <-- TRANSFER <------------+
 ```
 
 ## Flight recording pipeline
 
-1. `flight_task` drains ADXL375 FIFO (up to 32 samples/read via I2C burst)
-2. In IDLE: samples go into a ring buffer (800 entries = 2s at 400 Hz)
-3. On launch detect: ring buffer drains to new CSV file, then live samples accumulate in a write buffer
-4. Write buffer flushes to SPIFFS every 256 samples
-5. After 60s: file closed, 10s cooldown, return to IDLE
+1. `flight_task` (Core 1) drains ADXL375 FIFO (up to 32 samples/read via I2C burst)
+2. In IDLE: samples go into a 800-entry pre-trigger ring buffer (2s at 400 Hz)
+3. On launch detect: pre-trigger buffer + live samples are pushed into a 4000-entry RAM ring buffer (`s_log_ring`)
+4. `log_write_task` (Core 0) drains `s_log_ring` → SPIFFS. Flash erase stalls only Core 0; `flight_task` keeps reading the FIFO uninterrupted
+5. After 60s: `flight_task` signals flush, `log_write_task` closes the file, 3s cooldown, return to IDLE
 
 ## Serial protocol
 
@@ -44,7 +46,7 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 
 - Boot marker: `FORCE4:READY\n` (printed at startup for diagnostics; data.sh does not wait for it)
 - Response framing: `---BEGIN---\n` ... `---END---\n` around every command response
-- Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `transfer`, `ping`, `help`
+- Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `transfer`, `resume`, `ping`, `help`
 
 ## Partition layout
 

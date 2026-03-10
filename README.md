@@ -58,17 +58,18 @@ The logger continuously monitors acceleration magnitude. When it exceeds 3g for 
 ## Data transfer
 
 ```bash
-./data.sh diag          # verify device health
-./data.sh df            # show storage usage and flight list
-./data.sh pull          # download most recent flight
+./data.sh state                # show device state (non-invasive)
+./data.sh diag                 # verify device health
+./data.sh df                   # show storage usage and flight list
+./data.sh pull                 # download most recent flight
 ./data.sh pull flight_001.csv  # download specific file
-./data.sh wipe          # delete all flights
+./data.sh wipe                 # delete all flights
 ./data.sh wipe flight_001.csv  # delete specific file
 ```
 
 Requires `pyserial` (`pip install pyserial`).
 
-No DTR reset occurs on XIAO ESP32-S3 over USB Serial/JTAG — the board keeps running when the port is opened. `data.sh` sends a `transfer` command to pause flight logging before any operation.
+No DTR reset occurs on XIAO ESP32-S3 over USB Serial/JTAG — the board keeps running when the port is opened. `data.sh` sends a `transfer` command to pause flight logging before any operation, and a `resume` command when done to return the device to IDLE.
 
 ## Plot
 

@@ -67,3 +67,8 @@ Do not write to SPIFFS from `flight_task`. Any synchronous flash call (including
 ## Style
 
 - Markdown tables must have columns padded with spaces so they align in monospace (while remaining legal Markdown)
+
+## Documentation
+
+- Documentation should be updated when the code is updated, and must ALWAYS updated before changes are committed.
+- Documentation should be concise and avoid repetion. If information is in another file, reference it, don't duplicate it.

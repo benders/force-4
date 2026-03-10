@@ -17,8 +17,8 @@ typedef struct {
 bool adxl375_init(gpio_num_t sda, gpio_num_t scl);
 
 /**
- * Re-attempt sensor init (used for reconnect after failure).
- * Assumes I2C bus is already initialized.
+ * Tear down and re-initialize I2C bus + sensor (used for reconnect after failure).
+ * adxl375_init() must have been called at least once to record the GPIO pins.
  */
 bool adxl375_reinit(void);
 

@@ -32,6 +32,8 @@ static const char *TAG = "adxl375";
 
 static i2c_master_bus_handle_t bus_handle = NULL;
 static i2c_master_dev_handle_t dev_handle = NULL;
+static gpio_num_t s_sda = GPIO_NUM_NC;
+static gpio_num_t s_scl = GPIO_NUM_NC;
 
 static esp_err_t write_reg(uint8_t reg, uint8_t val)
 {
@@ -99,6 +101,9 @@ static void i2c_scan(void)
 
 bool adxl375_init(gpio_num_t sda, gpio_num_t scl)
 {
+    s_sda = sda;
+    s_scl = scl;
+
     i2c_master_bus_config_t bus_cfg = {
         .i2c_port = I2C_NUM_0,
         .sda_io_num = sda,
@@ -113,9 +118,11 @@ bool adxl375_init(gpio_num_t sda, gpio_num_t scl)
         return false;
     }
 
-    // Reset bus to free any device holding SDA low from a prior session
+    // Reset bus to free any device holding SDA low from a prior session.
+    // 50ms lets the ADXL375 finish any in-progress transaction after an ESP32
+    // soft reset (button press), when the sensor does not lose power.
     i2c_master_bus_reset(bus_handle);
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     // Probe for the ADXL375: try primary addr 0x53, fallback to 0x1D
     uint8_t found_addr = 0;
@@ -149,8 +156,18 @@ bool adxl375_init(gpio_num_t sda, gpio_num_t scl)
 
 bool adxl375_reinit(void)
 {
-    if (dev_handle == NULL) return false;
-    return configure_sensor();
+    if (s_sda == GPIO_NUM_NC) return false;  // adxl375_init never called
+
+    // Tear down existing handles so adxl375_init can rebuild from scratch
+    if (dev_handle != NULL) {
+        i2c_master_bus_rm_device(dev_handle);
+        dev_handle = NULL;
+    }
+    if (bus_handle != NULL) {
+        i2c_del_master_bus(bus_handle);
+        bus_handle = NULL;
+    }
+    return adxl375_init(s_sda, s_scl);
 }
 
 int adxl375_read_fifo_count(void)

@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
+#include "nvs_flash.h"
 
 #include "led.h"
 #include "adxl375.h"
@@ -55,6 +56,13 @@ void app_main(void)
     // Initialize LED
     led_init();
 
+    // Initialize NVS (required before storage_init uses NVS for flight counter)
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
+
     // Initialize storage
     if (!storage_init()) {
         ESP_LOGE(TAG, "Storage init failed!");
@@ -78,6 +86,11 @@ void app_main(void)
         ESP_LOGI(TAG, "Starting flight mode");
 
         if (sensor_ok) {
+            // log_write_task on Core 0: handles all SPIFFS writes so flight_task
+            // (Core 1) is never blocked by flash erase operations.
+            xTaskCreatePinnedToCore(
+                log_write_task, "log_write", FLIGHT_TASK_STACK,
+                NULL, 5, NULL, 0);
             xTaskCreatePinnedToCore(
                 flight_task, "flight", FLIGHT_TASK_STACK,
                 NULL, 5, NULL, 1);

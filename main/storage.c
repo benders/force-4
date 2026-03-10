@@ -1,6 +1,8 @@
 #include "storage.h"
 #include "esp_spiffs.h"
 #include "esp_log.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -48,6 +50,35 @@ int storage_next_flight_number(void)
     return max_n + 1;
 }
 
+int storage_load_flight_counter(void)
+{
+    nvs_handle_t h;
+    if (nvs_open("force4", NVS_READONLY, &h) == ESP_OK) {
+        int32_t n = 0;
+        esp_err_t err = nvs_get_i32(h, "flight_num", &n);
+        nvs_close(h);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "Flight counter from NVS: %d", (int)n);
+            return (int)n;
+        }
+    }
+    // NVS key not yet set — derive from dir scan and persist
+    int n = storage_next_flight_number();
+    storage_save_flight_counter(n);
+    ESP_LOGI(TAG, "Flight counter from dir scan: %d (saved to NVS)", n);
+    return n;
+}
+
+void storage_save_flight_counter(int n)
+{
+    nvs_handle_t h;
+    if (nvs_open("force4", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_i32(h, "flight_num", (int32_t)n);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
 FILE *storage_open_flight(int n)
 {
     char path[48];
@@ -59,8 +90,6 @@ FILE *storage_open_flight(int n)
         return NULL;
     }
 
-    fprintf(f, "timestamp_ns,ax_g,ay_g,az_g\n");
-    fflush(f);
     ESP_LOGI(TAG, "Opened %s for writing", path);
     return f;
 }

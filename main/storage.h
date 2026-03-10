@@ -10,12 +10,23 @@
 bool storage_init(void);
 
 /**
- * Scan existing flight files and return the next number.
+ * Scan existing flight files and return the next available number.
  */
 int storage_next_flight_number(void);
 
 /**
- * Open a new flight CSV file. Writes CSV header.
+ * Load the persisted flight counter from NVS. Falls back to dir scan
+ * on first boot. Returns the next flight number to use.
+ */
+int storage_load_flight_counter(void);
+
+/**
+ * Persist the flight counter to NVS so it survives data wipes.
+ */
+void storage_save_flight_counter(int n);
+
+/**
+ * Open a new empty flight CSV file (no header written).
  * Returns FILE* or NULL on failure.
  */
 FILE *storage_open_flight(int n);

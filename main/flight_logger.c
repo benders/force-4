@@ -9,29 +9,50 @@
 #include "freertos/task.h"
 #include <math.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static const char *TAG = "flight";
 
 // Configuration (matching force-3 config.py)
 #define SAMPLE_RATE_HZ      400
 #define LAUNCH_THRESHOLD_G  3.0f
-#define LAUNCH_HOLD_SAMPLES 20      // 50ms at 400Hz
-#define PRE_BUF_SIZE        800     // 2s * 400Hz
+#define LAUNCH_HOLD_SAMPLES 20          // 50ms at 400Hz
+#define PRE_BUF_SIZE        800         // 2s * 400Hz
 #define RECORD_DURATION_US  (60 * 1000000LL)
 #define IDLE_COOLDOWN_MS    3000
-#define WRITE_BUF_FLUSH     256
+
+// Ring buffer that decouples FIFO reads (flight_task, Core 1) from
+// SPIFFS writes (log_write_task, Core 0).  4000 samples ≈ 10s at 400Hz;
+// large enough to absorb any single flash erase (≤ ~400ms = 160 samples).
+#define LOG_RING_SIZE       4000
 
 static volatile flight_state_t state = FLIGHT_STATE_IDLE;
 static volatile int flight_count = 0;
 
-// Ring buffer for pre-trigger data
+// Pre-trigger ring buffer
 static adxl375_sample_t pre_buf[PRE_BUF_SIZE];
-
-// Static buffers to keep large arrays off the task stack
-static adxl375_sample_t s_samples[32];
-static adxl375_sample_t s_write_buf[WRITE_BUF_FLUSH];
 static int pre_buf_head = 0;
 static int pre_buf_count = 0;
+
+// FIFO read scratch buffer (small, only used inside flight_task)
+static adxl375_sample_t s_samples[32];
+
+// Log ring buffer — written by flight_task, consumed by log_write_task
+static adxl375_sample_t s_log_ring[LOG_RING_SIZE];
+static volatile uint32_t s_ring_head = 0;   // producer index (flight_task)
+static volatile uint32_t s_ring_tail = 0;   // consumer index (log_write_task)
+
+// Set by flight_task when recording ends; cleared by log_write_task after
+// it drains the ring and closes the file.
+static volatile bool s_log_flush = false;
+
+// setvbuf backing store for the flight file
+static char s_file_iobuf[4096];
+
+// Pre-opened flight file and its number — opened during IDLE so there is
+// zero file-open latency at launch detection.
+static FILE *flight_file = NULL;
+static int s_flight_num = 0;
 
 static void pre_buf_push(const adxl375_sample_t *s)
 {
@@ -40,19 +61,29 @@ static void pre_buf_push(const adxl375_sample_t *s)
     if (pre_buf_count < PRE_BUF_SIZE) pre_buf_count++;
 }
 
-static void pre_buf_drain_to_file(FILE *f)
+// Open (or create) the next ready file — empty CSV, no header yet.
+// If the NVS counter points to a file that already has data (crash recovery
+// after power loss mid-flight), advance the counter first.
+static void prepare_idle_file(void)
 {
-    if (!f || pre_buf_count == 0) return;
+    int n = storage_load_flight_counter();
 
-    // Oldest sample is at (head - count) mod size
-    int start = (pre_buf_head - pre_buf_count + PRE_BUF_SIZE) % PRE_BUF_SIZE;
-    for (int i = 0; i < pre_buf_count; i++) {
-        int idx = (start + i) % PRE_BUF_SIZE;
-        storage_write_samples(f, &pre_buf[idx], 1);
+    char path[48];
+    snprintf(path, sizeof(path), "/spiffs/flight_%03d.csv", n);
+    struct stat st;
+    if (stat(path, &st) == 0 && st.st_size > 0) {
+        n = (n + 1) % 1000;
+        storage_save_flight_counter(n);
     }
-    fflush(f);
-    pre_buf_count = 0;
-    pre_buf_head = 0;
+
+    s_flight_num = n;
+    flight_file = storage_open_flight(n);
+    if (flight_file) {
+        setvbuf(flight_file, s_file_iobuf, _IOFBF, sizeof(s_file_iobuf));
+        ESP_LOGI(TAG, "Ready file: flight_%03d.csv", n);
+    } else {
+        ESP_LOGE(TAG, "Failed to open ready file flight_%03d.csv", n);
+    }
 }
 
 flight_state_t flight_logger_get_state(void)
@@ -67,23 +98,72 @@ int flight_logger_get_flight_count(void)
 
 void flight_logger_enter_transfer(void)
 {
+    // Close the idle ready file so serial_cmd can safely delete SPIFFS files
+    if (state == FLIGHT_STATE_IDLE && flight_file) {
+        fclose(flight_file);
+        flight_file = NULL;
+    }
     state = FLIGHT_STATE_TRANSFER;
 }
 
+// ---------------------------------------------------------------------------
+// log_write_task  (pin to Core 0)
+//
+// Drains s_log_ring → flight_file.  Never called from flight_task so SPIFFS
+// blocking here does not stall the FIFO read loop on Core 1.
+//
+// With CONFIG_SPI_FLASH_AUTO_SUSPEND=y the flash erase runs in background;
+// Core 1 (flight_task) is not stalled during the erase and can keep reading
+// the hardware FIFO into s_log_ring without interruption.
+// ---------------------------------------------------------------------------
+void log_write_task(void *pvParameters)
+{
+    (void)pvParameters;
+
+    for (;;) {
+        uint32_t head = s_ring_head;
+        uint32_t tail = s_ring_tail;
+
+        if (head == tail) {
+            // Ring empty — check if we need to finalise the recording
+            if (s_log_flush && flight_file) {
+                storage_close_flight(flight_file);
+                flight_file = NULL;
+                s_log_flush = false;
+            }
+            vTaskDelay(1);
+            continue;
+        }
+
+        if (!flight_file) {
+            // No file to write to; discard
+            s_ring_tail = tail + 1;
+            continue;
+        }
+
+        storage_write_samples(flight_file, &s_log_ring[tail % LOG_RING_SIZE], 1);
+        s_ring_tail = tail + 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// flight_task  (pin to Core 1)
+//
+// Reads ADXL375 hardware FIFO → pre_buf (IDLE) or s_log_ring (LOGGING).
+// Never calls storage_write_samples — all flash I/O is in log_write_task.
+// ---------------------------------------------------------------------------
 void flight_task(void *pvParameters)
 {
     (void)pvParameters;
 
-    // Subscribe to task watchdog
     esp_task_wdt_add(NULL);
-
-    adxl375_sample_t *samples = s_samples;
-    adxl375_sample_t *write_buf = s_write_buf;
-    int write_buf_count = 0;
 
     int launch_count = 0;
     int64_t logging_start_us = 0;
-    FILE *flight_file = NULL;
+
+    // Pre-open the ready file before the main loop so launch detection
+    // needs no file-open latency.
+    prepare_idle_file();
 
     ESP_LOGI(TAG, "Flight task started");
 
@@ -92,16 +172,11 @@ void flight_task(void *pvParameters)
 
         float t_s = (float)(esp_timer_get_time() / 1000) / 1000.0f;
 
-        int n = adxl375_read_fifo_batch(samples, 32);
+        int n = adxl375_read_fifo_batch(s_samples, 32);
         if (n <= 0) {
-            // Update LED even when no samples
-            if (state == FLIGHT_STATE_IDLE) {
-                led_breathe_update(t_s);
-            } else if (state == FLIGHT_STATE_LOGGING) {
-                led_flash_update(t_s);
-            } else if (state == FLIGHT_STATE_TRANSFER) {
-                led_transfer_update(t_s);
-            }
+            if (state == FLIGHT_STATE_IDLE)     led_breathe_update(t_s);
+            else if (state == FLIGHT_STATE_LOGGING)  led_flash_update(t_s);
+            else if (state == FLIGHT_STATE_TRANSFER) led_transfer_update(t_s);
             vTaskDelay(pdMS_TO_TICKS(2));
             continue;
         }
@@ -111,26 +186,38 @@ void flight_task(void *pvParameters)
             led_breathe_update(t_s);
 
             for (int i = 0; i < n; i++) {
-                pre_buf_push(&samples[i]);
+                pre_buf_push(&s_samples[i]);
 
-                float mag = sqrtf(samples[i].ax_g * samples[i].ax_g +
-                                  samples[i].ay_g * samples[i].ay_g +
-                                  samples[i].az_g * samples[i].az_g);
+                float mag = sqrtf(s_samples[i].ax_g * s_samples[i].ax_g +
+                                  s_samples[i].ay_g * s_samples[i].ay_g +
+                                  s_samples[i].az_g * s_samples[i].az_g);
 
                 if (mag > LAUNCH_THRESHOLD_G) {
                     launch_count++;
                     if (launch_count >= LAUNCH_HOLD_SAMPLES) {
-                        int flight_num = storage_next_flight_number();
-                        flight_file = storage_open_flight(flight_num);
                         if (flight_file) {
-                            pre_buf_drain_to_file(flight_file);
+                            // Write CSV header (goes to setvbuf RAM — no flash I/O)
+                            fprintf(flight_file, "timestamp_ns,ax_g,ay_g,az_g\n");
+
+                            // Copy pre-trigger buffer into ring (RAM→RAM, instant)
+                            int start = (pre_buf_head - pre_buf_count + PRE_BUF_SIZE) % PRE_BUF_SIZE;
+                            for (int j = 0; j < pre_buf_count; j++) {
+                                int idx = (start + j) % PRE_BUF_SIZE;
+                                uint32_t h = s_ring_head;
+                                if (h - s_ring_tail < LOG_RING_SIZE) {
+                                    s_log_ring[h % LOG_RING_SIZE] = pre_buf[idx];
+                                    s_ring_head = h + 1;
+                                }
+                            }
+                            pre_buf_count = 0;
+                            pre_buf_head = 0;
+
                             state = FLIGHT_STATE_LOGGING;
                             logging_start_us = esp_timer_get_time();
-                            write_buf_count = 0;
                             flight_count++;
-                            ESP_LOGI(TAG, "Launch detected! Recording flight_%03d", flight_num);
+                            ESP_LOGI(TAG, "Launch! Recording flight_%03d", s_flight_num);
                         } else {
-                            ESP_LOGE(TAG, "Skipping flight — could not open file");
+                            ESP_LOGE(TAG, "Skipping flight — no ready file");
                             launch_count = 0;
                         }
                         break;
@@ -144,40 +231,49 @@ void flight_task(void *pvParameters)
         case FLIGHT_STATE_LOGGING:
             led_flash_update(t_s);
 
+            // Push samples into ring buffer only — no SPIFFS here
             for (int i = 0; i < n; i++) {
-                write_buf[write_buf_count++] = samples[i];
-                if (write_buf_count >= WRITE_BUF_FLUSH) {
-                    storage_write_samples(flight_file, write_buf, write_buf_count);
-                    fflush(flight_file);
-                    write_buf_count = 0;
+                uint32_t h = s_ring_head;
+                if (h - s_ring_tail < LOG_RING_SIZE) {
+                    s_log_ring[h % LOG_RING_SIZE] = s_samples[i];
+                    s_ring_head = h + 1;
+                } else {
+                    ESP_LOGW(TAG, "Ring buffer full — sample dropped");
                 }
             }
 
             int64_t elapsed = esp_timer_get_time() - logging_start_us;
             if (elapsed >= RECORD_DURATION_US) {
-                // Flush remaining samples
-                if (write_buf_count > 0) {
-                    storage_write_samples(flight_file, write_buf, write_buf_count);
-                    write_buf_count = 0;
-                }
-                storage_close_flight(flight_file);
-                flight_file = NULL;
-
-                ESP_LOGI(TAG, "Recording complete. Cooling down...");
+                ESP_LOGI(TAG, "Recording complete. Flushing...");
                 state = FLIGHT_STATE_COOLDOWN;
+
+                // Signal log_write_task to drain and close the file
+                s_log_flush = true;
+
+                // Wait for log_write_task to finish (it sets flight_file=NULL)
+                while (s_log_flush) {
+                    esp_task_wdt_reset();
+                    vTaskDelay(pdMS_TO_TICKS(10));
+                }
 
                 led_blink_n(3);
                 led_off();
                 vTaskDelay(pdMS_TO_TICKS(IDLE_COOLDOWN_MS));
 
+                // Advance counter and open the next ready file
+                int next = (s_flight_num + 1) % 1000;
+                storage_save_flight_counter(next);
+                s_ring_head = 0;
+                s_ring_tail = 0;
                 state = FLIGHT_STATE_IDLE;
                 launch_count = 0;
+                prepare_idle_file();
                 ESP_LOGI(TAG, "Ready. Waiting for launch...");
             }
             break;
 
         case FLIGHT_STATE_COOLDOWN:
-            // Handled inline above after transition
+            // Handled inline above
             break;
 
         case FLIGHT_STATE_TRANSFER:

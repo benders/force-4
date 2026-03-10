@@ -28,3 +28,10 @@ void flight_logger_enter_transfer(void);
  * pvParameters unused.
  */
 void flight_task(void *pvParameters);
+
+/**
+ * SPIFFS write task. Pin to core 0. Drains the log ring buffer to the
+ * flight file so flight_task never blocks on flash I/O.
+ * pvParameters unused.
+ */
+void log_write_task(void *pvParameters);

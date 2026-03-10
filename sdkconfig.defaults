@@ -20,3 +20,8 @@ CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 
 # FreeRTOS tick rate (1ms ticks)
 CONFIG_FREERTOS_HZ=1000
+
+# Allow Core 1 (flight_task) to keep running during flash erases on Core 0.
+# The MSPI controller suspends the erase when the CPU needs cache access,
+# so FIFO reads are not stalled by SPIFFS sector erases.
+CONFIG_SPI_FLASH_AUTO_SUSPEND=y

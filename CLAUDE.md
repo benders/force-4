@@ -39,10 +39,30 @@ Internal timestamps are microseconds; multiply by 1000 for the CSV nanosecond co
 
 ## Code conventions
 
-- Static buffers for large arrays (not on task stack) — see `s_samples`, `s_write_buf` in `flight_logger.c`
+- Static buffers for large arrays (not on task stack) — see `s_samples`, `s_log_ring` in `flight_logger.c`
 - Task stack sizes are 4096 bytes — be conservative with stack allocations
 - ESP_LOGI/ESP_LOGE go to the same USB serial as printf — the `---BEGIN---`/`---END---` framing separates command output from log noise
 - `flight_state_t` is `volatile` — set atomically from any task, read from `flight_task`
+
+## Flash I/O and data gaps
+
+**Critical:** SPIFFS sector erases (~200–400 ms) stall both CPU cores by default. At 400 Hz the ADXL375 hardware FIFO (32 samples = 80 ms) overflows during every erase, causing ~160-sample gaps repeating every ~1 s throughout the recording.
+
+Two-part fix — both are required:
+
+1. **`CONFIG_SPI_FLASH_AUTO_SUSPEND=y`** in `sdkconfig.defaults` — the MSPI controller suspends the erase when the CPU needs a cache fill, so Core 1 is not frozen for the full erase duration.
+
+2. **Dual-task architecture** (`flight_task` pinned to Core 1, `log_write_task` pinned to Core 0) with a 4000-sample RAM ring buffer (`s_log_ring`). `flight_task` only reads the FIFO into the ring; `log_write_task` handles all SPIFFS writes. Even if `log_write_task` blocks during an erase, `flight_task` keeps draining the FIFO.
+
+Do not write to SPIFFS from `flight_task`. Any synchronous flash call (including `fflush`) from the FIFO-reading task will reintroduce gaps.
+
+## Flight file lifecycle
+
+- A zero-length "ready" file (`flight_NNN.csv`) is pre-opened at boot and after each cooldown — no file-open latency at launch detection.
+- The next flight number is persisted in NVS (namespace `force4`, key `flight_num`) so it survives SPIFFS wipes.
+- Numbers wrap 999 → 000.
+- On boot, if the NVS counter points to a non-empty file (crash mid-flight), the counter is advanced to preserve the partial recording.
+- `flight_logger_enter_transfer()` closes the ready file before `serial_cmd` can delete files.
 
 ## Style
 

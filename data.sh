@@ -94,8 +94,10 @@ case "${1:-}" in
     if [ -n "${2:-}" ]; then
       FILE="$2"
     else
-      # Get most recent flight file
-      FILE=$(send_cmd "ls" "$PORT" 4 | grep 'flight_' | tail -1 | awk '{print $1}' | tr -d '\r')
+      # Get most recent non-empty flight file.
+      # ls output is "filename  size"; sort by name (zero-padded = numeric order),
+      # filter out zero-length files (the pre-opened ready file), take the last.
+      FILE=$(send_cmd "ls" "$PORT" 4 | grep 'flight_' | awk '$2 > 0 {print $1}' | sort | tail -1 | tr -d '\r')
     fi
     if [ -z "$FILE" ]; then
       echo "No flight data on device."

@@ -31,6 +31,12 @@ void flight_logger_enter_transfer(void);
 void flight_logger_exit_transfer(void);
 
 /**
+ * Manually trigger a flight recording from IDLE state.
+ * No-op if not in FLIGHT_STATE_IDLE. Safe to call from any task.
+ */
+void flight_logger_trigger(void);
+
+/**
  * Flight logger FreeRTOS task. Pin to core 1.
  * pvParameters unused.
  */

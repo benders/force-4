@@ -27,7 +27,7 @@ led.c/.h          LEDC PWM patterns (breathe, flash, transfer, blink)
 
 ```
 IDLE --(|a| > 3g for 50ms)--> LOGGING --(60s)--> COOLDOWN --(3s)--> IDLE
-  ^                                                                    |
+  |  \--("trigger" cmd)----->/                                        |
   |                  "transfer" cmd (from any IDLE state)             |
   +----------- "resume" cmd or 30s timeout <-- TRANSFER <------------+
 ```
@@ -46,7 +46,7 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 
 - Boot marker: `FORCE4:READY\n` (printed at startup for diagnostics; data.sh does not wait for it)
 - Response framing: `---BEGIN---\n` ... `---END---\n` around every command response
-- Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `transfer`, `resume`, `ping`, `help`
+- Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `trigger`, `transfer`, `resume`, `ping`, `help`
 
 ## Partition layout
 

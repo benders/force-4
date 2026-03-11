@@ -87,6 +87,7 @@ static void cmd_help(void)
     printf("  cat <filename>  Print file contents\n");
     printf("  rm <filename>   Delete file (requires transfer state)\n");
     printf("  status          Show system status\n");
+    printf("  trigger         Manually start a flight recording (IDLE only)\n");
     printf("  transfer        Pause logging; show transfer LED pattern\n");
     printf("  resume          Exit transfer mode; return to IDLE\n");
     printf("  ping            Connection test\n");
@@ -120,6 +121,13 @@ static void process_line(char *line)
         cmd_rm(arg);
     } else if (strcmp(line, "status") == 0) {
         cmd_status();
+    } else if (strcmp(line, "trigger") == 0) {
+        if (flight_logger_get_state() != FLIGHT_STATE_IDLE) {
+            printf("denied: only allowed in IDLE state\n");
+        } else {
+            flight_logger_trigger();
+            printf("ok\n");
+        }
     } else if (strcmp(line, "transfer") == 0) {
         flight_logger_enter_transfer();
         printf("ok\n");

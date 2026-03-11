@@ -276,6 +276,55 @@ sys.exit(0 if ok else 1)
     fi
     ;;
 
+  trigger)
+    python3 -c "
+import serial, sys, time
+
+port    = sys.argv[1]
+timeout = float(sys.argv[2]) if len(sys.argv) > 2 else 4.0
+
+ser = serial.Serial(port, 115200, timeout=0.1)
+time.sleep(0.2)
+ser.reset_input_buffer()
+
+ser.write(b'trigger\r\n')
+ser.flush()
+
+buf      = b''
+deadline = time.time() + timeout
+last_rx  = time.time()
+while time.time() < deadline:
+    chunk = ser.read(4096)
+    if chunk:
+        buf     += chunk
+        last_rx  = time.time()
+        if b'---END---' in buf:
+            break
+        deadline = max(deadline, last_rx + 0.5)
+    elif time.time() - last_rx > 0.8:
+        break
+    time.sleep(0.01)
+
+ser.close()
+
+text  = buf.decode(errors='replace')
+begin = text.find('---BEGIN---')
+end   = text.find('---END---')
+if begin >= 0:
+    content = text[begin + 11:end if end >= 0 else len(text)].strip()
+    if 'denied' in content:
+        sys.stderr.write('Error: ' + content + '\n')
+        sys.exit(1)
+    sys.stdout.write(content + '\n')
+elif text.strip():
+    sys.stderr.write('Warning: no response markers found\n')
+    sys.stdout.write(text.strip() + '\n')
+else:
+    sys.stderr.write('Error: no response from device\n')
+    sys.exit(1)
+" "$PORT" 4
+    ;;
+
   state)
     query_state "$PORT" 4
     ;;
@@ -319,6 +368,7 @@ sys.exit(0 if ok else 1)
     echo "  pull [file]   Download a flight CSV (default: most recent)"
     echo "  df            Show storage usage and list flights"
     echo "  wipe [file]   Delete flight data (default: all)"
+    echo "  trigger       Manually start a flight recording (device must be IDLE)"
     echo "  state         Show device state without changing it"
     echo "  diag          Run device health diagnostics"
     exit 1

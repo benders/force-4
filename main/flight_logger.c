@@ -41,6 +41,9 @@ static volatile int flight_count = 0;
 static volatile bool s_exit_transfer = false;
 static int64_t s_transfer_entry_us = 0;
 
+// Manual flight trigger: set by flight_logger_trigger() from serial_cmd.
+static volatile bool s_manual_trigger = false;
+
 // Pre-trigger ring buffer
 static adxl375_sample_t pre_buf[PRE_BUF_SIZE];
 static int pre_buf_head = 0;
@@ -151,6 +154,15 @@ void flight_logger_exit_transfer(void)
     s_exit_transfer = true;
 }
 
+void flight_logger_trigger(void)
+{
+    if (state != FLIGHT_STATE_IDLE) return;
+    s_manual_trigger = true;
+    if (s_flight_task_handle) {
+        xTaskNotifyGive(s_flight_task_handle);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // log_write_task  (pin to Core 0)
 //
@@ -240,6 +252,37 @@ void flight_task(void *pvParameters)
 
         switch (state) {
         case FLIGHT_STATE_IDLE:
+            if (s_manual_trigger) {
+                s_manual_trigger = false;
+                if (flight_file) {
+                    fprintf(flight_file, "timestamp_ns,ax_g,ay_g,az_g\n");
+
+                    // Copy pre-trigger buffer into ring (RAM→RAM)
+                    int start = (pre_buf_head - pre_buf_count + PRE_BUF_SIZE) % PRE_BUF_SIZE;
+                    for (int j = 0; j < pre_buf_count; j++) {
+                        int idx = (start + j) % PRE_BUF_SIZE;
+                        uint32_t h = s_ring_head;
+                        if (h - s_ring_tail < LOG_RING_SIZE) {
+                            s_log_ring[h % LOG_RING_SIZE] = pre_buf[idx];
+                            s_ring_head = h + 1;
+                        }
+                    }
+                    pre_buf_count = 0;
+                    pre_buf_head = 0;
+
+                    adxl375_config_watermark_int();
+                    s_idle_active = false;
+                    launch_count = 0;
+                    state = FLIGHT_STATE_LOGGING;
+                    logging_start_us = esp_timer_get_time();
+                    flight_count++;
+                    ESP_LOGI(TAG, "Manual trigger! Recording flight_%03d", s_flight_num);
+                } else {
+                    ESP_LOGE(TAG, "Manual trigger skipped — no ready file");
+                }
+                break;
+            }
+
             if (!s_idle_active) {
                 // Low-power wait: block until activity interrupt or 2s timeout
                 uint32_t notified = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2000));

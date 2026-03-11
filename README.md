@@ -14,6 +14,7 @@ Native C (ESP-IDF) rocket flight data logger. Records +-200g accelerometer data 
 |--------------|-------------------------------------------|
 | D4 (GPIO5)   | ADXL375 SDA (STEMMA QT)                   |
 | D5 (GPIO6)   | ADXL375 SCL (STEMMA QT)                   |
+| D3 (GPIO4)   | ADXL375 INT1                              |
 | D10 (GPIO9)  | Boot mode select (float=flight, GND=data) |
 
 The ADXL375 STEMMA QT cable provides SDA, SCL, 3V3, and GND. No other wiring needed.

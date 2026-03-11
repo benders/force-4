@@ -68,8 +68,58 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 
 Scale: 49 mg/LSB (raw * 0.049 = g). Timestamps estimated backward from read time at 2500us intervals.
 
+General ADXL375 notes (activity detection, soft-reset, register reference): `reference/ADXL375.md`.
+
 ### Soft-reset recovery
 
 After an ESP32 button reset (not power-cycle), the ADXL375 keeps power but may be stuck mid-transaction, causing the I2C probe to fail. `adxl375_init()` issues `i2c_master_bus_reset()` and waits 50ms before probing to allow the sensor to recover.
 
 If the probe still fails, `main.c` retries every 5s for up to 5 minutes via `adxl375_reinit()`, which tears down the I2C bus and device handles and calls `adxl375_init()` from scratch. In practice one retry (≈5s) is sufficient.
+
+## Interrupt-driven idle
+
+ADXL375 INT1 → GPIO4 drives `flight_task` via FreeRTOS task notification instead of polling.
+
+| State         | INT1 source | Behavior                                              |
+|---------------|-------------|-------------------------------------------------------|
+| IDLE sleeping | Activity    | Task blocked; wakes on accel change > 2.34g every 2s |
+| IDLE active   | Watermark   | Polls FIFO, fills pre-buffer, detects launch          |
+| LOGGING       | Watermark   | Blocks until 16 samples ready (40ms at 400 Hz)        |
+| TRANSFER      | (any)       | FIFO drained, interrupts ignored                      |
+
+After 5 seconds of quiet (< 2g) in active IDLE, `flight_task` reconfigures for activity interrupt and blocks again.
+
+Activity detection uses **AC-coupled mode** (`ACT_INACT_CTL` bit 7 = 1): the chip measures change from a baseline, not absolute acceleration. This ignores gravity in any orientation. The baseline is captured when `INT_SOURCE` is read, which also re-arms the detector. Both `adxl375_config_activity_int()` and the 2s polling fallback read `INT_SOURCE`, so the baseline is always taken from a resting state.
+
+**Edge-trigger race:** INT1 is POSEDGE-triggered. If the pin goes high between arming and `ulTaskNotifyTake`, the edge is missed. The 2s timeout path reads `INT_SOURCE` as a fallback — if the activity bit is set, active polling is entered regardless of whether the ISR fired.
+
+`flight_logger_enter_transfer()` calls `xTaskNotifyGive()` to wake `flight_task` if it is blocked waiting for an interrupt.
+
+The ISR handler (`int1_isr_handler`) is IRAM-resident and only calls `vTaskNotifyGiveFromISR`.
+
+## Flash I/O and data gaps
+
+SPIFFS sector erases (200–400 ms) stall both CPU cores by default. At 400 Hz the ADXL375 FIFO (32 samples = 80 ms) overflows during every erase, causing ~160-sample gaps repeating every ~1 s. Two fixes are both required:
+
+1. **`CONFIG_SPI_FLASH_AUTO_SUSPEND=y`** — the MSPI controller suspends the erase when the CPU needs a cache fill, so Core 1 is not frozen for the full erase duration. See `reference/XIAO-ESP32S3.md`.
+
+2. **Dual-task architecture** — `flight_task` (Core 1) only reads the FIFO into `s_log_ring`; `log_write_task` (Core 0) handles all SPIFFS writes. Even if `log_write_task` blocks during an erase, `flight_task` keeps draining the FIFO uninterrupted.
+
+Do not write to SPIFFS from `flight_task`. Any synchronous flash call (including `fflush`) from the FIFO-reading task reintroduces gaps.
+
+## Flight file lifecycle
+
+- A zero-length "ready" file (`flight_NNN.csv`) is pre-opened at boot and after each cooldown — no file-open latency at launch detection.
+- Flight number is persisted in NVS (namespace `force4`, key `flight_num`) and survives SPIFFS wipes.
+- Numbers wrap 999 → 000.
+- On boot, if the NVS counter points to a non-empty file (crash mid-flight), the counter is advanced to preserve the partial recording.
+- `flight_logger_enter_transfer()` closes the ready file before `serial_cmd` can delete files.
+
+## Code conventions
+
+- Large arrays use static buffers (not task stack) — see `s_samples`, `s_log_ring` in `flight_logger.c`.
+- Task stack size is 4096 bytes — be conservative with stack allocations; avoid large local arrays.
+- `ESP_LOGI`/`ESP_LOGE` share the USB serial with `printf`. The `---BEGIN---`/`---END---` framing in command responses separates command output from log noise.
+- `flight_state_t` is `volatile` — set atomically from any task, read only from `flight_task`.
+
+General XIAO ESP32-S3 notes (USB Serial/JTAG setup, flash erase stalls): `reference/XIAO-ESP32S3.md`.

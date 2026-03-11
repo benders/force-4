@@ -4,7 +4,7 @@
 #include "freertos/task.h"
 #include <math.h>
 
-#define LED_GPIO        21
+#define LED_GPIO        1
 #define LEDC_TIMER      LEDC_TIMER_0
 #define LEDC_CHANNEL    LEDC_CHANNEL_0
 #define LEDC_DUTY_RES   LEDC_TIMER_13_BIT
@@ -35,9 +35,8 @@ void led_init(void)
 
 void led_set(uint16_t duty)
 {
-    // GPIO21 LED is active-low: invert duty so callers treat MAX as "full on"
     uint32_t d = duty > LEDC_MAX_DUTY ? LEDC_MAX_DUTY : duty;
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, LEDC_MAX_DUTY - d);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, d);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
 }
 

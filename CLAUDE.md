@@ -20,7 +20,7 @@ The XIAO ESP32-S3 wires USB to the **USB Serial/JTAG controller**, NOT USB-OTG.
 
 ## GPIO mapping
 
-- SDA=GPIO5 (D4), SCL=GPIO6 (D5), Boot=GPIO9 (D10), LED=GPIO21
+- SDA=GPIO5 (D4), SCL=GPIO6 (D5), INT1=GPIO4 (D3), Boot=GPIO9 (D10), LED=GPIO21
 
 ## Serial protocol
 
@@ -43,6 +43,29 @@ Internal timestamps are microseconds; multiply by 1000 for the CSV nanosecond co
 - Task stack sizes are 4096 bytes — be conservative with stack allocations
 - ESP_LOGI/ESP_LOGE go to the same USB serial as printf — the `---BEGIN---`/`---END---` framing separates command output from log noise
 - `flight_state_t` is `volatile` — set atomically from any task, read from `flight_task`
+
+## Interrupt-driven idle
+
+ADXL375 INT1 → GPIO4 drives `flight_task` via FreeRTOS task notification instead of polling.
+
+| State         | INT1 source | Behavior                                                |
+| ------------- | ----------- | ------------------------------------------------------- |
+| IDLE sleeping | Activity    | Task blocked; wakes on accel change > 2.34g every 2s   |
+| IDLE active   | Watermark   | Polls FIFO, fills pre-buffer, detects launch            |
+| LOGGING       | Watermark   | Blocks until 16 samples ready (40ms at 400Hz)           |
+| TRANSFER      | (any)       | FIFO drained, interrupts ignored                        |
+
+After 5 seconds of quiet (< 2g) in active IDLE, `flight_task` reconfigures for activity interrupt and blocks again.
+
+**Activity detection uses AC-coupled mode** (`ACT_INACT_CTL` bit 7 = 1). The chip measures *change* from a baseline set when the detector arms, not absolute acceleration. This ignores gravity in any orientation, so resting noise (up to 2.79g per-axis) does not trigger false wakes. The threshold register `THRESH_ACT` uses 780 mg/LSB; `ceilf` is required when converting from g to avoid truncation below the noise floor.
+
+**The baseline is set when `INT_SOURCE` is read** (which re-arms the detector). `adxl375_config_activity_int()` and the 2s polling fallback both read `INT_SOURCE`, so the baseline is always taken from a resting state.
+
+**Edge-trigger race fix:** INT1 is POSEDGE-triggered. If the pin goes high between arming and the `ulTaskNotifyTake` call, the rising edge is missed. The 2s timeout path reads `INT_SOURCE` as a fallback — if the activity bit is set, active polling is entered regardless of whether the ISR fired.
+
+`flight_logger_enter_transfer()` calls `xTaskNotifyGive()` to wake `flight_task` if it is blocked on an interrupt wait.
+
+ISR handler (`int1_isr_handler`) is IRAM-resident; it only calls `vTaskNotifyGiveFromISR`.
 
 ## Flash I/O and data gaps
 

@@ -33,3 +33,23 @@ int adxl375_read_fifo_count(void);
  * Returns number of samples read, or -1 on error.
  */
 int adxl375_read_fifo_batch(adxl375_sample_t *buf, int max_samples);
+
+/**
+ * Configure ADXL375 to generate an activity interrupt on INT1.
+ * Threshold in g (resolution 780 mg/LSB, minimum ~0.78g).
+ * Disables all other interrupts.
+ */
+void adxl375_config_activity_int(float threshold_g);
+
+/**
+ * Configure ADXL375 to generate a watermark interrupt on INT1.
+ * Uses the watermark level set during init (16 samples).
+ * Disables all other interrupts.
+ */
+void adxl375_config_watermark_int(void);
+
+/**
+ * Read INT_SOURCE register to determine which interrupt fired
+ * and clear latched interrupt flags.
+ */
+uint8_t adxl375_read_int_source(void);

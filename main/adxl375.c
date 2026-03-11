@@ -3,6 +3,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <math.h>
 #include <string.h>
 
 static const char *TAG = "adxl375";
@@ -14,6 +15,11 @@ static const char *TAG = "adxl375";
 #define REG_BW_RATE         0x2C
 #define REG_POWER_CTL       0x2D
 #define REG_DATA_FORMAT     0x31
+#define REG_THRESH_ACT      0x24
+#define REG_ACT_INACT_CTL   0x27
+#define REG_INT_ENABLE      0x2E
+#define REG_INT_MAP         0x2F
+#define REG_INT_SOURCE      0x30
 #define REG_DATAX0          0x32
 #define REG_FIFO_CTL        0x38
 #define REG_FIFO_STATUS     0x39
@@ -24,6 +30,8 @@ static const char *TAG = "adxl375";
 #define POWER_CTL_MEASURE   0x08
 #define DATA_FORMAT_FULL    0x0B
 #define FIFO_STREAM_WM16    0x90  // Stream mode (0b10 << 6) | watermark 16
+#define ACT_CTL_AC_XYZ      0xF0  // AC-coupled activity, X+Y+Z enabled
+#define ACT_THRESH_SCALE    0.78f // g per LSB for THRESH_ACT
 
 #define MG_PER_LSB          0.049f
 
@@ -77,6 +85,14 @@ static bool configure_sensor(void)
     if (write_reg(REG_POWER_CTL, POWER_CTL_MEASURE) != ESP_OK) return false;
     if (write_reg(REG_DATA_FORMAT, DATA_FORMAT_FULL) != ESP_OK) return false;
     if (write_reg(REG_FIFO_CTL, FIFO_STREAM_WM16) != ESP_OK) return false;
+
+    // Interrupts: all mapped to INT1 (default), disabled until flight_task
+    if (write_reg(REG_INT_MAP, 0x00) != ESP_OK) return false;
+    if (write_reg(REG_INT_ENABLE, 0x00) != ESP_OK) return false;
+
+    // Activity detection: AC-coupled so gravity offset is ignored regardless
+    // of orientation. Threshold set later by config_activity_int.
+    if (write_reg(REG_ACT_INACT_CTL, ACT_CTL_AC_XYZ) != ESP_OK) return false;
 
     ESP_LOGI(TAG, "Sensor configured: 400Hz, stream FIFO, watermark=16");
     return true;
@@ -206,4 +222,36 @@ int adxl375_read_fifo_batch(adxl375_sample_t *buf, int max_samples)
     }
 
     return read_count;
+}
+
+void adxl375_config_activity_int(float threshold_g)
+{
+    uint8_t thresh = (uint8_t)ceilf(threshold_g / ACT_THRESH_SCALE);
+    if (thresh == 0) thresh = 1;
+    write_reg(REG_THRESH_ACT, thresh);
+
+    // Clear any pending interrupt flags
+    uint8_t dummy;
+    read_reg(REG_INT_SOURCE, &dummy, 1);
+
+    // Enable activity interrupt only (bit 4)
+    write_reg(REG_INT_ENABLE, 0x10);
+    ESP_LOGI(TAG, "Activity interrupt enabled: %.1fg (reg=%d)", thresh * ACT_THRESH_SCALE, thresh);
+}
+
+void adxl375_config_watermark_int(void)
+{
+    // Clear any pending interrupt flags
+    uint8_t dummy;
+    read_reg(REG_INT_SOURCE, &dummy, 1);
+
+    // Enable watermark interrupt only (bit 1)
+    write_reg(REG_INT_ENABLE, 0x02);
+}
+
+uint8_t adxl375_read_int_source(void)
+{
+    uint8_t src = 0;
+    read_reg(REG_INT_SOURCE, &src, 1);
+    return src;
 }

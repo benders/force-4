@@ -18,7 +18,7 @@
 
 static const char *TAG = "main";
 
-// XIAO ESP32-S3: D10=GPIO9, D4=GPIO5 (SDA), D5=GPIO6 (SCL)
+// XIAO ESP32-S3: D10=GPIO9, D3=GPIO4 (INT1), D4=GPIO5 (SDA), D5=GPIO6 (SCL)
 #define GPIO_BOOT_MODE  GPIO_NUM_9
 #define GPIO_SDA        GPIO_NUM_5
 #define GPIO_SCL        GPIO_NUM_6

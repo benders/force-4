@@ -45,11 +45,10 @@ void led_off(void)
     led_set(0);
 }
 
-void led_breathe_update(float t_s)
+void led_idle_update(float t_s)
 {
-    float phase = fmodf(t_s, 3.0f) / 3.0f;
-    float brightness = 1.0f - fabsf(2.0f * phase - 1.0f);
-    led_set((uint16_t)(brightness * LEDC_MAX_DUTY));
+    float phase = fmodf(t_s, 2.0f);
+    led_set(phase < 0.05f ? LEDC_MAX_DUTY : 0);
 }
 
 void led_flash_update(float t_s)

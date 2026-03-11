@@ -60,6 +60,7 @@ The logger continuously monitors acceleration magnitude. When it exceeds 3g for 
 
 ```bash
 ./mission-control status               # show device status
+./mission-control monitor              # stream raw serial output (Ctrl-C to stop)
 ./mission-control diag                 # verify device health
 ./mission-control df                   # show storage usage and flight list
 ./mission-control pull                 # download most recent flight
@@ -70,7 +71,7 @@ The logger continuously monitors acceleration magnitude. When it exceeds 3g for 
 
 No third-party packages required — uses only Python stdlib.
 
-No DTR reset occurs on XIAO ESP32-S3 over USB Serial/JTAG — the board keeps running when the port is opened. Data commands (`pull`, `wipe`, `df`, `ls`, `cat`, `rm`, `diag`) enter the TRANSFER state for the duration and resume IDLE when done. All commands require the device to be IDLE before starting.
+No DTR reset occurs on XIAO ESP32-S3 over USB Serial/JTAG — the board keeps running when the port is opened. `monitor` is read-only and can be used any time. Data commands (`pull`, `wipe`, `df`, `ls`, `cat`, `rm`, `diag`) enter the TRANSFER state for the duration and resume IDLE when done. All commands except `status` and `monitor` require the device to be IDLE before starting.
 
 ## Plot
 

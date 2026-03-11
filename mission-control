@@ -6,6 +6,7 @@ Quick commands (no TRANSFER state):
   ping     Test connection
   help     Show device command help
   trigger  Manually start a flight recording
+  monitor  Stream raw serial output (read-only, Ctrl-C to stop)
 
 Data commands (device enters TRANSFER state for the duration):
   ls              List flight files on device
@@ -16,7 +17,7 @@ Data commands (device enters TRANSFER state for the duration):
   wipe [file]     Delete flight file(s) (default: all, with confirmation)
   diag            Run device health diagnostics
 
-All commands (except 'status') require the device to be IDLE.
+All commands (except 'status' and 'monitor') require the device to be IDLE.
 No third-party packages required — uses only Python stdlib.
 """
 
@@ -277,6 +278,40 @@ def cmd_wipe(device, args):
                 sys.exit(1)
 
 
+def cmd_monitor(port, args):
+    """Stream raw serial output from the device (read-only). Ctrl-C to stop."""
+    fd = os.open(port, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    try:
+        attrs    = termios.tcgetattr(fd)
+        attrs[0] = 0                                              # iflag
+        attrs[1] = 0                                              # oflag
+        attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL  # 8N1, no modem ctl
+        attrs[3] = 0                                              # lflag: raw
+        attrs[4] = termios.B115200
+        attrs[5] = termios.B115200
+        attrs[6][termios.VMIN]  = 0
+        attrs[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        buf = b''
+        while True:
+            try:
+                chunk = os.read(fd, 4096)
+                if chunk:
+                    buf += chunk
+                    while b'\n' in buf:
+                        line, buf = buf.split(b'\n', 1)
+                        sys.stdout.buffer.write(line + b'\n')
+                        sys.stdout.buffer.flush()
+                else:
+                    time.sleep(0.01)
+            except BlockingIOError:
+                time.sleep(0.01)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        os.close(fd)
+
+
 def cmd_diag(device, args):
     print('=== Force-4 Diagnostics ===')
     print(f'Port: {device.port}')
@@ -343,6 +378,7 @@ def main():
     sub.add_parser('ping',    help='Test connection')
     sub.add_parser('help',    help='Show device command help')
     sub.add_parser('trigger', help='Manually start a flight recording (IDLE only)')
+    sub.add_parser('monitor', help='Stream raw serial output (read-only, Ctrl-C to stop)')
 
     # Data commands
     sub.add_parser('ls',  help='List flight files on device')
@@ -359,6 +395,10 @@ def main():
 
     args = parser.parse_args()
     port = args.port or _find_port()
+
+    if args.command == 'monitor':
+        cmd_monitor(port, args)
+        return
 
     with Device(port) as device:
         _COMMANDS[args.command](device, args)

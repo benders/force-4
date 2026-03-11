@@ -2,7 +2,6 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "driver/i2c_master.h"
 #include "driver/gpio.h"
 
 typedef struct {
@@ -11,13 +10,13 @@ typedef struct {
 } adxl375_sample_t;
 
 /**
- * Initialize I2C bus and ADXL375 sensor.
+ * Initialize SPI bus and ADXL375 sensor.
  * Returns true on success, false if sensor not found.
  */
-bool adxl375_init(gpio_num_t sda, gpio_num_t scl);
+bool adxl375_init(gpio_num_t mosi, gpio_num_t miso, gpio_num_t sclk, gpio_num_t cs);
 
 /**
- * Tear down and re-initialize I2C bus + sensor (used for reconnect after failure).
+ * Tear down and re-initialize SPI bus + sensor (used for reconnect after failure).
  * adxl375_init() must have been called at least once to record the GPIO pins.
  */
 bool adxl375_reinit(void);

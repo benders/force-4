@@ -16,7 +16,7 @@ ESP-IDF v5.4 application running two FreeRTOS tasks on an ESP32-S3.
 
 ```
 main.c            Boot sequence, GPIO mode select, task creation
-adxl375.c/.h      ADXL375 sensor driver (I2C, 400 kHz; see reference/I2C.md)
+adxl375.c/.h      ADXL375 sensor driver (SPI, 4 MHz, Mode 3; see reference/ADXL375.md)
 flight_logger.c/.h  State machine + ring buffer + CSV recording
 storage.c/.h      SPIFFS mount, flight file lifecycle, CSV writing
 serial_cmd.c/.h   Command dispatch, response framing
@@ -34,7 +34,7 @@ IDLE --(|a| > 3g for 50ms)--> LOGGING --(60s)--> COOLDOWN --(3s)--> IDLE
 
 ## Flight recording pipeline
 
-1. `flight_task` (Core 1) drains ADXL375 FIFO (up to 32 samples/read via I2C burst)
+1. `flight_task` (Core 1) drains ADXL375 FIFO (up to 32 samples/read via SPI burst)
 2. In IDLE: samples go into a 800-entry pre-trigger ring buffer (2s at 400 Hz)
 3. On launch detect: pre-trigger buffer + live samples are pushed into a 4000-entry RAM ring buffer (`s_log_ring`)
 4. `log_write_task` (Core 0) drains `s_log_ring` → SPIFFS. Flash erase stalls only Core 0; `flight_task` keeps reading the FIFO uninterrupted
@@ -68,15 +68,11 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 
 Scale: 49 mg/LSB (raw * 0.049 = g). Timestamps estimated backward from read time at 2500us intervals.
 
-General ADXL375 notes (activity detection, soft-reset, register reference): `reference/ADXL375.md`.
+General ADXL375 notes (activity detection, SPI framing, register reference): `reference/ADXL375.md`.
 
-### Soft-reset recovery
+### Connection recovery
 
-After an ESP32 button reset (not power-cycle), the ADXL375 keeps power but may be stuck mid-transaction, causing the I2C probe to fail. `adxl375_init()` issues `i2c_master_bus_reset()` and waits 50ms before probing to allow the sensor to recover.
-
-If the probe still fails, `main.c` retries every 5s for up to 5 minutes via `adxl375_reinit()`, which tears down the I2C bus and device handles and calls `adxl375_init()` from scratch. In practice one retry (≈5s) is sufficient.
-
-See `reference/I2C.md` for driver-level recovery details.
+SPI has no stuck-bus problem (CS idles high, no shared clock line). If `adxl375_init()` fails (bad DEVID or SPI error), `main.c` retries every 5s for up to 5 minutes via `adxl375_reinit()`, which removes the SPI device, frees the bus, and calls `adxl375_init()` from scratch.
 
 ## Interrupt-driven idle
 

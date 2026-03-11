@@ -19,7 +19,7 @@ The XIAO ESP32-S3 uses the **USB Serial/JTAG controller**, not USB-OTG. See `ref
 
 ## GPIO mapping
 
-SDA=GPIO5 (D4), SCL=GPIO6 (D5), INT1=GPIO4 (D3), Boot=GPIO9 (D10), LED=GPIO21 (active-low)
+SCLK=GPIO7 (D8), MOSI=GPIO9 (D10), MISO=GPIO8 (D9), CS=GPIO2 (D1), INT1=GPIO4 (D3), Boot=GPIO9 (D10, read before SPI init), LED=GPIO21 (active-low)
 
 ## Serial protocol
 

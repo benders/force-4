@@ -18,10 +18,14 @@
 
 static const char *TAG = "main";
 
-// XIAO ESP32-S3: D10=GPIO9, D3=GPIO4 (INT1), D4=GPIO5 (SDA), D5=GPIO6 (SCL)
+// XIAO ESP32-S3 GPIO assignments
+// D10=GPIO9: boot mode (read at startup) + SPI MOSI (after adxl375_init)
+// D8=GPIO7: SCLK, D9=GPIO8: MISO, D1=GPIO2: CS, D3=GPIO4: INT1
 #define GPIO_BOOT_MODE  GPIO_NUM_9
-#define GPIO_SDA        GPIO_NUM_5
-#define GPIO_SCL        GPIO_NUM_6
+#define GPIO_SPI_MOSI   GPIO_NUM_9
+#define GPIO_SPI_MISO   GPIO_NUM_8
+#define GPIO_SPI_SCLK   GPIO_NUM_7
+#define GPIO_SPI_CS     GPIO_NUM_2
 
 #define FLIGHT_TASK_STACK  4096
 #define SERIAL_TASK_STACK  4096
@@ -69,7 +73,7 @@ void app_main(void)
     }
 
     // Initialize sensor
-    bool sensor_ok = adxl375_init(GPIO_SDA, GPIO_SCL);
+    bool sensor_ok = adxl375_init(GPIO_SPI_MOSI, GPIO_SPI_MISO, GPIO_SPI_SCLK, GPIO_SPI_CS);
     if (!sensor_ok) {
         ESP_LOGE(TAG, "ADXL375 init failed — will retry");
         // Retry loop for sensor reconnection

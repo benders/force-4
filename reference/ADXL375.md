@@ -4,9 +4,21 @@
 
 ## Interface
 
-- **I2C address:** 0x53 (ALT: 0x1D when SDO/CS pulled high)
-- **SPI:** also supported (4-wire)
-- **Max I2C clock:** 400 kHz
+- **SPI:** 4-wire, Mode 3 (CPOL=CPHA=1), up to 5 MHz. CS idles high; no bus-reset needed.
+- **I2C (alternate):** address 0x53 (ALT: 0x1D when SDO/CS pulled high), max 400 kHz
+
+### SPI address-byte framing
+
+Each transaction starts with one address byte:
+
+| Bit  | 7   | 6  | 5:0             |
+|------|-----|----|-----------------|
+| Role | R/W | MB | Register addr   |
+
+- **R/W:** 1 = read, 0 = write
+- **MB:** 1 = multi-byte burst (set when reading >1 byte)
+
+Write: tx `[addr, val]`. Read: tx `[addr, 0x00…]`, rx `[garbage, data…]`.
 
 ## Scale and output
 
@@ -69,12 +81,12 @@ Scale: **780 mg/LSB**. Use `ceilf()` when converting from g to avoid rounding do
 uint8_t thresh = (uint8_t)ceilf(threshold_g / 0.780f);
 ```
 
-For post-reset recovery and ESP-IDF driver details, see `reference/I2C.md`.
+For post-reset recovery details, see `ARCHITECTURE.md` (Connection recovery section).
 
 ## Initialization sequence
 
 ```
-1. Power on or reset recovery (see reference/I2C.md)
+1. SPI CS idles high; no bus-reset needed
 2. Verify DEVID == 0xE5
 3. Write POWER_CTL = 0x00   (standby)
 4. Write DATA_FORMAT = 0x0B (full resolution, right-justified, ±200g)

@@ -1,4 +1,14 @@
+# ESP-IDF build artifacts
 build/
 sdkconfig
 managed_components/
 dependencies.lock
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Flight data
+flight_*.csv
+flight_*.png

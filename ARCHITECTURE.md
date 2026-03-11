@@ -16,7 +16,7 @@ ESP-IDF v5.4 application running two FreeRTOS tasks on an ESP32-S3.
 
 ```
 main.c            Boot sequence, GPIO mode select, task creation
-adxl375.c/.h      I2C driver for ADXL375 (400kHz bus, register-level)
+adxl375.c/.h      ADXL375 sensor driver (I2C, 400 kHz; see reference/I2C.md)
 flight_logger.c/.h  State machine + ring buffer + CSV recording
 storage.c/.h      SPIFFS mount, flight file lifecycle, CSV writing
 serial_cmd.c/.h   Command dispatch, response framing
@@ -75,6 +75,8 @@ General ADXL375 notes (activity detection, soft-reset, register reference): `ref
 After an ESP32 button reset (not power-cycle), the ADXL375 keeps power but may be stuck mid-transaction, causing the I2C probe to fail. `adxl375_init()` issues `i2c_master_bus_reset()` and waits 50ms before probing to allow the sensor to recover.
 
 If the probe still fails, `main.c` retries every 5s for up to 5 minutes via `adxl375_reinit()`, which tears down the I2C bus and device handles and calls `adxl375_init()` from scratch. In practice one retry (≈5s) is sufficient.
+
+See `reference/I2C.md` for driver-level recovery details.
 
 ## Interrupt-driven idle
 

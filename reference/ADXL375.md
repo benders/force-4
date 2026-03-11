@@ -48,7 +48,7 @@
 - Modes (FIFO_CTL bits 7:6): Bypass (00), FIFO (01), Stream (10), Trigger (11)
 - **Stream mode** continuously overwrites oldest samples — no overflow flag, but data is lost if not drained before full
 - Watermark level set in FIFO_CTL bits 4:0; FIFO_STATUS reports current fill level
-- Burst-read all 6 axis bytes per sample in one I2C transaction to minimize bus time
+- Burst-read all 6 axis bytes per sample in one transaction to minimize bus time
 
 ## Activity detection
 
@@ -69,20 +69,12 @@ Scale: **780 mg/LSB**. Use `ceilf()` when converting from g to avoid rounding do
 uint8_t thresh = (uint8_t)ceilf(threshold_g / 0.780f);
 ```
 
-## Soft-reset / I2C recovery
-
-After a host microcontroller reset (without power-cycling the ADXL375), the sensor may be mid-transaction on the I2C bus, causing the next probe to fail with a NACK or timeout. Recovery sequence:
-
-1. Call `i2c_master_bus_reset()` (or equivalent bus recovery for your platform)
-2. Wait ≥ 50 ms
-3. Re-probe DEVID register (expect 0xE5)
-
-If the probe still fails, tear down and reinitialize the I2C bus and device handles entirely before retrying.
+For post-reset recovery and ESP-IDF driver details, see `reference/I2C.md`.
 
 ## Initialization sequence
 
 ```
-1. Power on or reset recovery (above)
+1. Power on or reset recovery (see reference/I2C.md)
 2. Verify DEVID == 0xE5
 3. Write POWER_CTL = 0x00   (standby)
 4. Write DATA_FORMAT = 0x0B (full resolution, right-justified, ±200g)

@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""mission-control — Force-4 flight data manager
+
+Quick commands (no TRANSFER state):
+  state    Show device status; exits non-zero if not IDLE
+  ping     Test connection
+  help     Show device command help
+  trigger  Manually start a flight recording
+
+Data commands (device enters TRANSFER state for the duration):
+  ls              List flight files on device
+  cat <file>      Print flight file contents
+  rm  <file>      Delete a specific flight file
+  pull [file]     Download flight CSV (default: most recent non-empty)
+  df              Show storage usage and flight list
+  wipe [file]     Delete flight file(s) (default: all, with confirmation)
+  diag            Run device health diagnostics
+
+All commands (except 'state') require the device to be IDLE.
+No third-party packages required — uses only Python stdlib.
+"""
+
+import argparse
+import glob as _glob
+import os
+import sys
+import termios
+import time
+from contextlib import contextmanager
+
+_PORT_GLOB  = '/dev/cu.usbmodem*'
+_STATE_IDLE = 'FLIGHT_STATE_IDLE'
+_BEGIN      = '---BEGIN---'
+_END        = '---END---'
+
+
+# ---------------------------------------------------------------------------
+# Port discovery
+# ---------------------------------------------------------------------------
+
+def _find_port():
+    ports = _glob.glob(_PORT_GLOB)
+    if not ports:
+        sys.exit('ERROR: No USB modem device found. Is the board connected?')
+    return ports[0]
+
+
+# ---------------------------------------------------------------------------
+# Device: serial connection and protocol
+# ---------------------------------------------------------------------------
+
+class Device:
+    """Serial connection to the Force-4 board (stdlib termios, no pyserial)."""
+
+    def __init__(self, port):
+        self.port = port
+        self._fd  = None
+
+    def __enter__(self):
+        self._fd = os.open(self.port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+        attrs    = termios.tcgetattr(self._fd)
+        attrs[0] = 0                                              # iflag: no input processing
+        attrs[1] = 0                                              # oflag: no output processing
+        attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL  # 8N1, enable rx
+        attrs[3] = 0                                              # lflag: raw
+        attrs[4] = termios.B115200                                # ispeed
+        attrs[5] = termios.B115200                                # ospeed
+        attrs[6][termios.VMIN]  = 0
+        attrs[6][termios.VTIME] = 0
+        termios.tcsetattr(self._fd, termios.TCSANOW, attrs)
+        time.sleep(0.2)
+        termios.tcflush(self._fd, termios.TCIOFLUSH)
+        return self
+
+    def __exit__(self, *_):
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+
+    def _read_until_end(self, timeout):
+        buf      = b''
+        deadline = time.monotonic() + timeout
+        last_rx  = time.monotonic()
+        while time.monotonic() < deadline:
+            try:
+                chunk = os.read(self._fd, 4096)
+                if chunk:
+                    buf     += chunk
+                    last_rx  = time.monotonic()
+                    if b'---END---' in buf:
+                        break
+                    deadline = max(deadline, last_rx + 0.5)  # extend on activity
+            except BlockingIOError:
+                if time.monotonic() - last_rx > 0.8:         # idle timeout
+                    break
+                time.sleep(0.01)
+        return buf
+
+    def _extract(self, raw):
+        """Extract content between ---BEGIN--- and ---END--- markers."""
+        text  = raw.decode(errors='replace')
+        begin = text.find(_BEGIN)
+        end   = text.find(_END)
+        if begin >= 0:
+            return text[begin + len(_BEGIN):end if end >= 0 else len(text)].strip()
+        return text.strip() or None
+
+    def send(self, cmd, timeout=4.0):
+        """Send a command and return extracted response text, or exit on failure."""
+        termios.tcflush(self._fd, termios.TCIFLUSH)
+        os.write(self._fd, (cmd + '\r\n').encode())
+        result = self._extract(self._read_until_end(timeout))
+        if result is None:
+            sys.exit(f'ERROR: no response from device (cmd={cmd!r})')
+        return result
+
+    def get_state(self):
+        """Return the device state string (e.g. FLIGHT_STATE_IDLE)."""
+        for line in self.send('status').splitlines():
+            if line.startswith('state:'):
+                return line.split(':', 1)[1].strip()
+        sys.exit('ERROR: could not parse device state from status response')
+
+    def require_idle(self):
+        s = self.get_state()
+        if s != _STATE_IDLE:
+            sys.exit(f'ERROR: device is not IDLE (state={s}). Aborting.')
+
+    def enter_transfer(self):
+        self.send('transfer', timeout=3.0)
+        time.sleep(0.1)
+        termios.tcflush(self._fd, termios.TCIFLUSH)
+
+    def exit_transfer(self):
+        self.send('resume', timeout=2.0)
+
+
+@contextmanager
+def _transfer(device):
+    """Context manager: check IDLE, enter TRANSFER, yield, then resume."""
+    device.require_idle()
+    device.enter_transfer()
+    try:
+        yield device
+    finally:
+        device.exit_transfer()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _parse_ls(output):
+    """Return list of (filename, size_bytes) for flight files from 'ls' output."""
+    result = []
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].startswith('flight_'):
+            try:
+                result.append((parts[0], int(parts[1])))
+            except ValueError:
+                pass
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Quick commands — no TRANSFER state required
+# ---------------------------------------------------------------------------
+
+def cmd_state(device, args):
+    """Print device status. Exits non-zero if not IDLE (safe to run any time)."""
+    output = device.send('status')
+    print(output)
+    s = None
+    for line in output.splitlines():
+        if line.startswith('state:'):
+            s = line.split(':', 1)[1].strip()
+    if s != _STATE_IDLE:
+        sys.exit(f'Not IDLE (state={s})')
+
+
+def cmd_ping(device, args):
+    device.require_idle()
+    print(device.send('ping'))
+
+
+def cmd_help(device, args):
+    device.require_idle()
+    print(device.send('help'))
+
+
+def cmd_trigger(device, args):
+    device.require_idle()
+    result = device.send('trigger')
+    if 'denied' in result.lower():
+        sys.exit(f'ERROR: {result}')
+    print(result)
+
+
+# ---------------------------------------------------------------------------
+# Data commands — device enters TRANSFER state for the duration
+# ---------------------------------------------------------------------------
+
+def cmd_ls(device, args):
+    with _transfer(device) as dev:
+        print(dev.send('ls'))
+
+
+def cmd_cat(device, args):
+    with _transfer(device) as dev:
+        print(dev.send(f'cat {args.file}', timeout=60))
+
+
+def cmd_rm(device, args):
+    confirm = input(f'Delete {args.file} from device? [y/N] ')
+    if confirm.lower() != 'y':
+        sys.exit('Aborted.')
+    with _transfer(device) as dev:
+        result = dev.send(f'rm {args.file}')
+        if 'error' in result.lower() or 'denied' in result.lower():
+            sys.exit(f'FAILED: {result}')
+        print(f'Deleted {args.file}')
+
+
+def cmd_pull(device, args):
+    with _transfer(device) as dev:
+        filename = args.file
+        if not filename:
+            flights = _parse_ls(dev.send('ls'))
+            candidates = sorted(f for f, sz in flights if sz > 0)
+            if not candidates:
+                sys.exit('No flight data on device.')
+            filename = candidates[-1]
+        print(f'Downloading {filename} ...')
+        content = dev.send(f'cat {filename}', timeout=60)
+        with open(filename, 'w') as f:
+            f.write(content + '\n')
+        print(f'Saved {filename} ({os.path.getsize(filename)} bytes)')
+
+
+def cmd_df(device, args):
+    with _transfer(device) as dev:
+        print(dev.send('status'))
+        print('---')
+        print(dev.send('ls'))
+
+
+def cmd_wipe(device, args):
+    with _transfer(device) as dev:
+        if args.file:
+            confirm = input(f'Delete {args.file} from device? [y/N] ')
+            if confirm.lower() != 'y':
+                sys.exit('Aborted.')
+            result = dev.send(f'rm {args.file}')
+            if 'error' in result.lower() or 'denied' in result.lower():
+                sys.exit(f'FAILED: {result}')
+            print(f'Deleted {args.file}')
+        else:
+            flights = _parse_ls(dev.send('ls'))
+            files   = [f for f, _ in flights]
+            if not files:
+                print('No files to delete.')
+                return
+            print('\n'.join(files))
+            confirm = input('Delete ALL listed files? [y/N] ')
+            if confirm.lower() != 'y':
+                sys.exit('Aborted.')
+            ok = True
+            for f in files:
+                result = dev.send(f'rm {f}')
+                if 'error' in result.lower() or 'denied' in result.lower():
+                    print(f'FAILED {f}: {result}', file=sys.stderr)
+                    ok = False
+                else:
+                    print(f'Deleted {f}')
+            if not ok:
+                sys.exit(1)
+
+
+def cmd_diag(device, args):
+    print('=== Force-4 Diagnostics ===')
+    print(f'Port: {device.port}')
+    print()
+    with _transfer(device) as dev:
+        print('--- Ping ---')
+        ping = dev.send('ping')
+        if 'pong' in ping:
+            print('OK: device responded to ping')
+        else:
+            print(f'FAIL: no pong\n  Got: {ping}')
+            sys.exit(1)
+        print()
+        print('--- Status ---')
+        print(dev.send('status'))
+        print()
+        print('--- Storage ---')
+        print(dev.send('ls'))
+    print()
+    print('=== All checks passed ===')
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+_COMMANDS = {
+    # quick
+    'state':   cmd_state,
+    'ping':    cmd_ping,
+    'help':    cmd_help,
+    'trigger': cmd_trigger,
+    # data
+    'ls':      cmd_ls,
+    'cat':     cmd_cat,
+    'rm':      cmd_rm,
+    'pull':    cmd_pull,
+    'df':      cmd_df,
+    'wipe':    cmd_wipe,
+    'diag':    cmd_diag,
+}
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='mission-control',
+        description='Force-4 flight data manager',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            'Quick commands (no TRANSFER state):\n'
+            '  state, ping, help, trigger\n'
+            '\n'
+            'Data commands (device enters TRANSFER state for safety):\n'
+            '  ls, cat, rm, pull, df, wipe, diag\n'
+            '\n'
+            'All commands except "state" require the device to be IDLE.'
+        ),
+    )
+    parser.add_argument('--port', help='Serial port (default: auto-detect /dev/cu.usbmodem*)')
+    sub = parser.add_subparsers(dest='command', required=True)
+
+    # Quick commands
+    sub.add_parser('state',   help='Show device status (safe to run any time)')
+    sub.add_parser('ping',    help='Test connection')
+    sub.add_parser('help',    help='Show device command help')
+    sub.add_parser('trigger', help='Manually start a flight recording (IDLE only)')
+
+    # Data commands
+    sub.add_parser('ls',  help='List flight files on device')
+    p = sub.add_parser('cat',  help='Print flight file contents to stdout')
+    p.add_argument('file')
+    p = sub.add_parser('rm',   help='Delete a specific flight file from device')
+    p.add_argument('file')
+    p = sub.add_parser('pull', help='Download flight CSV to local file (default: most recent)')
+    p.add_argument('file', nargs='?', help='Flight filename (default: most recent non-empty)')
+    sub.add_parser('df',   help='Show storage usage and flight list')
+    p = sub.add_parser('wipe', help='Delete flight file(s) from device (default: all)')
+    p.add_argument('file', nargs='?', help='Flight filename (default: all, with confirmation)')
+    sub.add_parser('diag', help='Run device health diagnostics')
+
+    args = parser.parse_args()
+    port = args.port or _find_port()
+
+    with Device(port) as device:
+        _COMMANDS[args.command](device, args)
+
+
+if __name__ == '__main__':
+    main()

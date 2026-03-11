@@ -35,8 +35,9 @@ void led_init(void)
 
 void led_set(uint16_t duty)
 {
+    // GPIO21 LED is active-low: invert duty so callers treat MAX as "full on"
     uint32_t d = duty > LEDC_MAX_DUTY ? LEDC_MAX_DUTY : duty;
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, d);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, LEDC_MAX_DUTY - d);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
 }
 

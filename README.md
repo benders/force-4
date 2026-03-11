@@ -39,17 +39,17 @@ Requires `esptool.py` on the host (`pip install esptool`).
 
 ### Boot modes
 
-- **D10 floating (default):** Flight mode -- LED breathes, logger armed
+- **D10 floating (default):** Flight mode -- LED pulses, logger armed
 - **D10 grounded:** Data mode -- no logging
 
 ### LED patterns
 
-| Pattern                   | State                      |
-|---------------------------|----------------------------|
-| Slow breathing (3s cycle) | Idle, waiting for launch   |
-| Fast flash (5 Hz)         | Recording flight           |
-| 3 blinks then off         | Cooldown after recording   |
-| Double-blink (2s cycle)   | Data transfer in progress  |
+| Pattern                 | State                     |
+|-------------------------|---------------------------|
+| Brief pulse every 2s    | Idle, waiting for launch  |
+| Fast flash (5 Hz)       | Recording flight          |
+| 3 blinks then off       | Cooldown after recording  |
+| Double-blink (2s cycle) | Data transfer in progress |
 
 ### Flight recording
 

@@ -59,7 +59,7 @@ The logger continuously monitors acceleration magnitude. When it exceeds 3g for 
 ## Data transfer
 
 ```bash
-./mission-control state                # show device status
+./mission-control status               # show device status
 ./mission-control diag                 # verify device health
 ./mission-control df                   # show storage usage and flight list
 ./mission-control pull                 # download most recent flight

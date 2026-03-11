@@ -2,7 +2,7 @@
 """mission-control — Force-4 flight data manager
 
 Quick commands (no TRANSFER state):
-  state    Show device status; exits non-zero if not IDLE
+  status   Show device status; exits non-zero if not IDLE
   ping     Test connection
   help     Show device command help
   trigger  Manually start a flight recording
@@ -16,7 +16,7 @@ Data commands (device enters TRANSFER state for the duration):
   wipe [file]     Delete flight file(s) (default: all, with confirmation)
   diag            Run device health diagnostics
 
-All commands (except 'state') require the device to be IDLE.
+All commands (except 'status') require the device to be IDLE.
 No third-party packages required — uses only Python stdlib.
 """
 
@@ -167,7 +167,7 @@ def _parse_ls(output):
 # Quick commands — no TRANSFER state required
 # ---------------------------------------------------------------------------
 
-def cmd_state(device, args):
+def cmd_status(device, args):
     """Print device status. Exits non-zero if not IDLE (safe to run any time)."""
     output = device.send('status')
     print(output)
@@ -305,7 +305,7 @@ def cmd_diag(device, args):
 
 _COMMANDS = {
     # quick
-    'state':   cmd_state,
+    'status':  cmd_status,
     'ping':    cmd_ping,
     'help':    cmd_help,
     'trigger': cmd_trigger,
@@ -327,19 +327,19 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             'Quick commands (no TRANSFER state):\n'
-            '  state, ping, help, trigger\n'
+            '  status, ping, help, trigger\n'
             '\n'
             'Data commands (device enters TRANSFER state for safety):\n'
             '  ls, cat, rm, pull, df, wipe, diag\n'
             '\n'
-            'All commands except "state" require the device to be IDLE.'
+            'All commands except "status" require the device to be IDLE.'
         ),
     )
     parser.add_argument('--port', help='Serial port (default: auto-detect /dev/cu.usbmodem*)')
     sub = parser.add_subparsers(dest='command', required=True)
 
     # Quick commands
-    sub.add_parser('state',   help='Show device status (safe to run any time)')
+    sub.add_parser('status',  help='Show device status (safe to run any time)')
     sub.add_parser('ping',    help='Test connection')
     sub.add_parser('help',    help='Show device command help')
     sub.add_parser('trigger', help='Manually start a flight recording (IDLE only)')

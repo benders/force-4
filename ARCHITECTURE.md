@@ -35,8 +35,8 @@ IDLE --(|a| > 3g for 50ms)--> LOGGING --(60s)--> COOLDOWN --(3s)--> IDLE
 ## Flight recording pipeline
 
 1. `flight_task` (Core 1) drains ADXL375 FIFO (up to 32 samples/read via SPI burst)
-2. In IDLE: samples go into a 800-entry pre-trigger ring buffer (2s at 400 Hz)
-3. On launch detect: pre-trigger buffer + live samples are pushed into a 4000-entry RAM ring buffer (`s_log_ring`)
+2. In IDLE: samples go into a 1600-entry pre-trigger ring buffer (2s at 800 Hz)
+3. On launch detect: pre-trigger buffer + live samples are pushed into a 16,000-entry PSRAM ring buffer (`s_log_ring`)
 4. `log_write_task` (Core 0) drains `s_log_ring` → SPIFFS. Flash erase stalls only Core 0; `flight_task` keeps reading the FIFO uninterrupted
 5. After 60s: `flight_task` signals flush, `log_write_task` closes the file, 3s cooldown, return to IDLE
 
@@ -61,12 +61,12 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 
 | Register            | Value | Purpose                          |
 |---------------------|-------|----------------------------------|
-| BW_RATE (0x2C)      | 0x0C  | 400 Hz ODR                       |
+| BW_RATE (0x2C)      | 0x0D  | 800 Hz ODR                       |
 | POWER_CTL (0x2D)    | 0x08  | Measurement mode                 |
 | DATA_FORMAT (0x31)  | 0x0B  | Full resolution, right-justified |
 | FIFO_CTL (0x38)     | 0x90  | Stream mode, watermark=16        |
 
-Scale: 49 mg/LSB (raw * 0.049 = g). Timestamps estimated backward from read time at 2500us intervals.
+Scale: 49 mg/LSB (raw * 0.049 = g). Timestamps estimated backward from read time at 1250us intervals.
 
 General ADXL375 notes (activity detection, SPI framing, register reference): `reference/ADXL375.md`.
 
@@ -82,7 +82,7 @@ ADXL375 INT1 → GPIO4 drives `flight_task` via FreeRTOS task notification inste
 |---------------|-------------|-------------------------------------------------------|
 | IDLE sleeping | Activity    | Task blocked; wakes on accel change > 2.34g every 2s |
 | IDLE active   | Watermark   | Polls FIFO, fills pre-buffer, detects launch          |
-| LOGGING       | Watermark   | Blocks until 16 samples ready (40ms at 400 Hz)        |
+| LOGGING       | Watermark   | Blocks until 16 samples ready (20ms at 800 Hz)        |
 | TRANSFER      | (any)       | FIFO drained, interrupts ignored                      |
 
 After 5 seconds of quiet (< 2g) in active IDLE, `flight_task` reconfigures for activity interrupt and blocks again.
@@ -97,13 +97,19 @@ The ISR handler (`int1_isr_handler`) is IRAM-resident and only calls `vTaskNotif
 
 ## Flash I/O and data gaps
 
-SPIFFS sector erases (200–400 ms) stall both CPU cores by default. At 400 Hz the ADXL375 FIFO (32 samples = 80 ms) overflows during every erase, causing ~160-sample gaps repeating every ~1 s. Two fixes are both required:
+SPIFFS sector erases (200–400 ms) stall both CPU cores by default. At 800 Hz the ADXL375 FIFO (32 samples = 40 ms) overflows during every erase, causing ~320-sample gaps repeating every ~1 s. Three fixes are all required:
 
 1. **`CONFIG_SPI_FLASH_AUTO_SUSPEND=y`** — the MSPI controller suspends the erase when the CPU needs a cache fill, so Core 1 is not frozen for the full erase duration. See `reference/XIAO-ESP32S3.md`.
 
 2. **Dual-task architecture** — `flight_task` (Core 1) only reads the FIFO into `s_log_ring`; `log_write_task` (Core 0) handles all SPIFFS writes. Even if `log_write_task` blocks during an erase, `flight_task` keeps draining the FIFO uninterrupted.
 
+3. **PSRAM ring buffer** — at 800 Hz, CSV output requires ~27 KB/s but SPIFFS sustains only ~21 KB/s, a deficit of ~168 samples/sec. Over a 60 s flight this accumulates ~10,080 samples. `s_log_ring` holds 16,000 entries (~20 s at 800 Hz) allocated from PSRAM via `heap_caps_malloc(MALLOC_CAP_SPIRAM)`, providing ~14,000 samples of headroom above the worst-case deficit.
+
 Do not write to SPIFFS from `flight_task`. Any synchronous flash call (including `fflush`) from the FIFO-reading task reintroduces gaps.
+
+### PSRAM and AUTO_SUSPEND compatibility
+
+`CONFIG_SPIRAM=y` and `CONFIG_SPI_FLASH_AUTO_SUSPEND=y` are compatible on ESP32-S3 and must both be enabled. **Do not use `EXT_RAM_BSS_ATTR`** to place large arrays in PSRAM — the BSS zero-fill that runs during startup (before `app_main()` and before the USB Serial/JTAG driver is installed) conflicts with early boot and causes a silent crash with no serial output. Use `heap_caps_malloc(MALLOC_CAP_SPIRAM)` inside `flight_task` instead.
 
 ## Flight file lifecycle
 
@@ -115,7 +121,7 @@ Do not write to SPIFFS from `flight_task`. Any synchronous flash call (including
 
 ## Code conventions
 
-- Large arrays use static buffers (not task stack) — see `s_samples`, `s_log_ring` in `flight_logger.c`.
+- Large arrays use static buffers (not task stack) — see `s_samples` in `flight_logger.c`. Exception: `s_log_ring` is heap-allocated from PSRAM at task startup; see PSRAM note above.
 - Task stack size is 4096 bytes — be conservative with stack allocations; avoid large local arrays.
 - `ESP_LOGI`/`ESP_LOGE` share the USB serial with `printf`. The `---BEGIN---`/`---END---` framing in command responses separates command output from log noise.
 - `flight_state_t` is `volatile` — set atomically from any task, read only from `flight_task`.

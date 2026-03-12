@@ -35,9 +35,27 @@ timestamp_ns,ax_g,ay_g,az_g
 
 Internal timestamps are microseconds; multiply by 1000 for the CSV nanosecond column.
 
+## PSRAM
+
+The ring buffer (`s_log_ring`, 16,000 entries) is allocated from PSRAM with `heap_caps_malloc(MALLOC_CAP_SPIRAM)` inside `flight_task`. **Do not use `EXT_RAM_BSS_ATTR`** — BSS zero-fill during startup crashes the device silently before USB Serial/JTAG is available. When changing PSRAM-related `sdkconfig.defaults` keys, always `rm -rf build sdkconfig` before rebuilding.
+
+## Flashing
+
+The XIAO ESP32-S3 USB Serial/JTAG controller does **not** support hard-reset via the RTS pin. After holding BOOT+RESET to enter download mode, the device stays in download mode until the **RESET button is pressed again** (not a software reset). `--after hard_reset` in esptool is a no-op here.
+
+Do not open the serial port from two processes simultaneously — concurrent access corrupts the USB Serial/JTAG output stream and causes garbled serial responses.
+
+After power-on, allow ~12 s before running `mission-control` commands. On first boot after a full flash erase, SPIFFS formats, which adds several more seconds.
+
+## mission-control
+
+After `wipe` or `rm`, wait ~3 s before the next `status` call — trailing log bytes in the serial buffer can confuse response parsing. The `wipe` command retries `resume` up to 3 times internally; if all retries fail the device auto-resumes after its 30 s TRANSFER timeout.
+
+When pulling large flight files, `ESP_LOGI` messages from the firmware may be interleaved into the CSV content. Filter non-numeric rows when analysing: `[r for r in csv.DictReader(f) if r['timestamp_ns'].strip().isdigit()]`.
+
 ## Architecture and code conventions
 
-See `ARCHITECTURE.md` for: state machine, tasks, modules, interrupt-driven idle, flash I/O gap fix, flight file lifecycle, and code conventions.
+See `ARCHITECTURE.md` for: state machine, tasks, modules, PSRAM ring buffer, interrupt-driven idle, flash I/O gap fix, flight file lifecycle, and code conventions.
 
 ## Style
 

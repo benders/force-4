@@ -11,21 +11,24 @@
 #include <math.h>
 #include <string.h>
 #include <sys/stat.h>
+#include "esp_heap_caps.h"
 
 static const char *TAG = "flight";
 
 // Configuration (matching force-3 config.py)
-#define SAMPLE_RATE_HZ      400
+#define SAMPLE_RATE_HZ      800
 #define LAUNCH_THRESHOLD_G  3.0f
-#define LAUNCH_HOLD_SAMPLES 20          // 50ms at 400Hz
-#define PRE_BUF_SIZE        800         // 2s * 400Hz
+#define LAUNCH_HOLD_SAMPLES 40          // 50ms at 800Hz
+#define PRE_BUF_SIZE        1600        // 2s * 800Hz
 #define RECORD_DURATION_US  (60 * 1000000LL)
 #define IDLE_COOLDOWN_MS    3000
 
 // Ring buffer that decouples FIFO reads (flight_task, Core 1) from
-// SPIFFS writes (log_write_task, Core 0).  4000 samples ≈ 10s at 400Hz;
-// large enough to absorb any single flash erase (≤ ~400ms = 160 samples).
-#define LOG_RING_SIZE       4000
+// SPIFFS writes (log_write_task, Core 0).  16000 samples ≈ 20s at 800Hz.
+// Sized to absorb the SPIFFS throughput deficit (~168 samples/sec) over a
+// full 60s flight (deficit = ~10080 samples; ring gives 14400 of headroom).
+// Allocated from PSRAM heap at runtime (see flight_task startup).
+#define LOG_RING_SIZE       16000
 
 // Interrupt-driven idle: ADXL375 INT1 on GPIO4 (XIAO D3)
 #define GPIO_INT1           GPIO_NUM_4
@@ -52,8 +55,9 @@ static int pre_buf_count = 0;
 // FIFO read scratch buffer (small, only used inside flight_task)
 static adxl375_sample_t s_samples[32];
 
-// Log ring buffer — written by flight_task, consumed by log_write_task
-static adxl375_sample_t s_log_ring[LOG_RING_SIZE];
+// Log ring buffer — written by flight_task, consumed by log_write_task.
+// Allocated from PSRAM at startup (heap_caps_malloc MALLOC_CAP_SPIRAM).
+static adxl375_sample_t *s_log_ring = NULL;
 static volatile uint32_t s_ring_head = 0;   // producer index (flight_task)
 static volatile uint32_t s_ring_tail = 0;   // consumer index (log_write_task)
 
@@ -62,7 +66,7 @@ static volatile uint32_t s_ring_tail = 0;   // consumer index (log_write_task)
 static volatile bool s_log_flush = false;
 
 // setvbuf backing store for the flight file
-static char s_file_iobuf[4096];
+static char s_file_iobuf[8192];
 
 // Pre-opened flight file and its number — opened during IDLE so there is
 // zero file-open latency at launch detection.
@@ -211,7 +215,7 @@ void log_write_task(void *pvParameters)
 // IDLE sleeping:  activity interrupt at 2g wakes the task.
 // IDLE active:    polls FIFO to fill pre-buffer + detect launch.
 //                 Returns to sleeping after 5s of quiet (< 1.5g).
-// LOGGING:        watermark interrupt every 16 samples (40ms at 400Hz).
+// LOGGING:        watermark interrupt every 16 samples (20ms at 800Hz).
 //
 // Never calls storage_write_samples — all flash I/O is in log_write_task.
 // ---------------------------------------------------------------------------
@@ -220,6 +224,25 @@ void flight_task(void *pvParameters)
     (void)pvParameters;
 
     s_flight_task_handle = xTaskGetCurrentTaskHandle();
+
+    // Allocate log ring buffer from PSRAM at runtime to avoid BSS placement
+    // issues during startup (EXT_RAM_BSS_ATTR zeroing happens before USB CDC
+    // is up, making crashes invisible).
+    s_log_ring = heap_caps_malloc(LOG_RING_SIZE * sizeof(adxl375_sample_t),
+                                  MALLOC_CAP_SPIRAM);
+    if (!s_log_ring) {
+        ESP_LOGE(TAG, "PSRAM alloc failed (%zu bytes); falling back to DRAM",
+                 LOG_RING_SIZE * sizeof(adxl375_sample_t));
+        s_log_ring = malloc(LOG_RING_SIZE * sizeof(adxl375_sample_t));
+        if (!s_log_ring) {
+            ESP_LOGE(TAG, "DRAM alloc also failed — aborting flight_task");
+            vTaskDelete(NULL);
+            return;
+        }
+    } else {
+        ESP_LOGI(TAG, "Log ring allocated in PSRAM (%u samples)",
+                 (unsigned)LOG_RING_SIZE);
+    }
 
     // Configure GPIO interrupt for ADXL375 INT1 (active-high, rising edge)
     gpio_config_t io_conf = {
@@ -236,6 +259,7 @@ void flight_task(void *pvParameters)
     esp_task_wdt_add(NULL);
 
     int launch_count = 0;
+    int drop_count = 0;
     int64_t logging_start_us = 0;
 
     // Pre-open the ready file before the main loop so launch detection
@@ -388,8 +412,12 @@ void flight_task(void *pvParameters)
                     if (h - s_ring_tail < LOG_RING_SIZE) {
                         s_log_ring[h % LOG_RING_SIZE] = s_samples[i];
                         s_ring_head = h + 1;
+                        if (drop_count > 0) {
+                            ESP_LOGW(TAG, "Ring recovered: %d samples dropped", drop_count);
+                            drop_count = 0;
+                        }
                     } else {
-                        ESP_LOGW(TAG, "Ring buffer full — sample dropped");
+                        drop_count++;
                     }
                 }
 

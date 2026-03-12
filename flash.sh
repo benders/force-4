@@ -35,4 +35,4 @@ case "${1:-flash}" in
 esac
 
 echo "Starting monitor on $PORT ..."
-mission-control --port "$PORT" monitor
+./mission-control --port "$PORT" monitor

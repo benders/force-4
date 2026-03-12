@@ -133,7 +133,19 @@ class Device:
         termios.tcflush(self._fd, termios.TCIFLUSH)
 
     def exit_transfer(self):
-        self.send('resume', timeout=2.0)
+        # Retry resume up to 3 times: after a large rm the USB TX buffer may
+        # still be draining, delaying the response past the idle-gap timeout.
+        for attempt in range(3):
+            if attempt:
+                time.sleep(0.5)
+            termios.tcflush(self._fd, termios.TCIFLUSH)
+            os.write(self._fd, b'resume\r\n')
+            raw = self._read_until_end(timeout=3.0)
+            if b'---END---' in raw:
+                return
+        # If all retries fail the device will auto-resume after its 30s timeout.
+        print('WARNING: resume got no response; device will auto-resume in ≤30s',
+              file=sys.stderr)
 
 
 @contextmanager

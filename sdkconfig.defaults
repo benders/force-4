@@ -1,5 +1,11 @@
 CONFIG_IDF_TARGET="esp32s3"
 
+# PSRAM (8MB OPI on XIAO ESP32-S3) — used for the log ring buffer so it is
+# large enough to absorb the SPIFFS write deficit over a 60s flight at 800Hz.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
 # Flash size
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 
@@ -22,6 +28,7 @@ CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 CONFIG_FREERTOS_HZ=1000
 
 # Allow Core 1 (flight_task) to keep running during flash erases on Core 0.
-# The MSPI controller suspends the erase when the CPU needs cache access,
+# The MSPI controller suspends the erase when the CPU needs a cache fill,
 # so FIFO reads are not stalled by SPIFFS sector erases.
+# Compatible with CONFIG_SPIRAM — do not use EXT_RAM_BSS_ATTR (see CLAUDE.md).
 CONFIG_SPI_FLASH_AUTO_SUSPEND=y

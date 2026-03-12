@@ -25,7 +25,7 @@ static const char *TAG = "adxl375";
 
 // Config values
 #define DEVID_EXPECTED      0xE5
-#define BW_RATE_400HZ       0x0C
+#define BW_RATE_800HZ       0x0D
 #define POWER_CTL_MEASURE   0x08
 #define DATA_FORMAT_FULL    0x0B
 #define FIFO_STREAM_WM16    0x90  // Stream mode (0b10 << 6) | watermark 16
@@ -91,7 +91,7 @@ static bool configure_sensor(void)
     ESP_LOGI(TAG, "DEVID=0x%02X OK", devid);
 
     // Configure sensor
-    if (write_reg(REG_BW_RATE, BW_RATE_400HZ) != ESP_OK) return false;
+    if (write_reg(REG_BW_RATE, BW_RATE_800HZ) != ESP_OK) return false;
     if (write_reg(REG_POWER_CTL, POWER_CTL_MEASURE) != ESP_OK) return false;
     if (write_reg(REG_DATA_FORMAT, DATA_FORMAT_FULL) != ESP_OK) return false;
     if (write_reg(REG_FIFO_CTL, FIFO_STREAM_WM16) != ESP_OK) return false;
@@ -104,7 +104,7 @@ static bool configure_sensor(void)
     // of orientation. Threshold set later by config_activity_int.
     if (write_reg(REG_ACT_INACT_CTL, ACT_CTL_AC_XYZ) != ESP_OK) return false;
 
-    ESP_LOGI(TAG, "Sensor configured: 400Hz, stream FIFO, watermark=16");
+    ESP_LOGI(TAG, "Sensor configured: 800Hz, stream FIFO, watermark=16");
     return true;
 }
 
@@ -188,7 +188,7 @@ int adxl375_read_fifo_batch(adxl375_sample_t *buf, int max_samples)
         buf[read_count].ay_g = y * MG_PER_LSB;
         buf[read_count].az_g = z * MG_PER_LSB;
         // Timestamps: oldest sample first
-        buf[read_count].timestamp_us = t_now - (int64_t)(count - 1 - i) * 2500;
+        buf[read_count].timestamp_us = t_now - (int64_t)(count - 1 - i) * 1250;
         read_count++;
     }
 

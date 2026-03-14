@@ -12,7 +12,7 @@ Data commands (device enters TRANSFER state for the duration):
   ls              List flight files on device
   cat <file>      Print flight file contents
   rm  <file>      Delete a specific flight file
-  pull [file]     Download flight data as CSV (binary on device, converted on pull)
+  pull [file]     Download flight data as CSV (default: all new files)
   df              Show storage usage and flight list
   wipe [file]     Delete flight file(s) (default: all, with confirmation)
   diag            Run device health diagnostics
@@ -339,60 +339,80 @@ _RECORD_FMT  = '<qfff'
 _RECORD_SIZE = struct.calcsize(_RECORD_FMT)  # 20 bytes
 
 
+def _pull_one(dev, filename, expected_bytes):
+    """Pull a single flight file from device and save as CSV. Returns True on success."""
+    expected_records = expected_bytes // _RECORD_SIZE
+    print(f'Downloading {filename} ({expected_bytes} bytes, '
+          f'{expected_records} samples) ...')
+
+    def progress(received):
+        pct = received * 100 // expected_bytes
+        print(f'\r  {received}/{expected_bytes} bytes ({pct}%)',
+              end='', flush=True)
+
+    try:
+        data = dev.read_binary(f'cat {filename}',
+                               expected_bytes, progress_cb=progress)
+    except RuntimeError as e:
+        print(f'\nERROR: transfer failed: {e}')
+        return False
+
+    print()  # newline after progress
+
+    if len(data) != expected_bytes:
+        print(f'ERROR: received {len(data)} bytes but expected {expected_bytes}')
+        return False
+
+    if len(data) % _RECORD_SIZE != 0:
+        print(f'ERROR: {len(data)} bytes is not a multiple of '
+              f'{_RECORD_SIZE} (corrupt file?)')
+        return False
+
+    out_path = filename + '.csv'
+    with open(out_path, 'w') as f:
+        f.write('timestamp_ns,ax_g,ay_g,az_g\n')
+        for offset in range(0, len(data), _RECORD_SIZE):
+            ts_us, ax, ay, az = struct.unpack_from(_RECORD_FMT, data, offset)
+            f.write(f'{ts_us * 1000},{ax:.4f},{ay:.4f},{az:.4f}\n')
+
+    records = len(data) // _RECORD_SIZE
+    print(f'Saved {out_path} ({os.path.getsize(out_path)} bytes, {records} samples)')
+    return True
+
+
 def cmd_pull(device, args):
     with _transfer(device) as dev:
-        filename = args.file
-        if not filename:
-            flights = _parse_ls(dev.send('ls'))
-            candidates = sorted(f for f, sz in flights if sz > 0)
-            if not candidates:
-                sys.exit('No flight data on device.')
-            filename = candidates[-1]
-
-        # Get file size via send() first (parses the size: header from cat output)
-        # We use a quick send to get the size header, but that also reads the data.
-        # Instead, get size from ls output.
         flights = {f: sz for f, sz in _parse_ls(dev.send('ls'))}
-        if filename not in flights:
-            sys.exit(f'ERROR: {filename} not found on device')
-        expected_bytes = flights[filename]
-        if expected_bytes == 0:
-            sys.exit(f'ERROR: {filename} is empty')
-        expected_records = expected_bytes // _RECORD_SIZE
-        print(f'Downloading {filename} ({expected_bytes} bytes, '
-              f'{expected_records} samples) ...')
 
-        def progress(received):
-            pct = received * 100 // expected_bytes
-            print(f'\r  {received}/{expected_bytes} bytes ({pct}%)',
-                  end='', flush=True)
-
-        try:
-            data = dev.read_binary(f'cat {filename}',
-                                   expected_bytes, progress_cb=progress)
-        except RuntimeError as e:
-            print(f'\nERROR: transfer failed: {e}')
-            sys.exit(1)
-
-        print()  # newline after progress
-
-        if len(data) != expected_bytes:
-            print(f'ERROR: received {len(data)} bytes but expected {expected_bytes}')
-            sys.exit(1)
-
-        if len(data) % _RECORD_SIZE != 0:
-            sys.exit(f'ERROR: {len(data)} bytes is not a multiple of '
-                     f'{_RECORD_SIZE} (corrupt file?)')
-
-        out_path = filename + '.csv'
-        with open(out_path, 'w') as f:
-            f.write('timestamp_ns,ax_g,ay_g,az_g\n')
-            for offset in range(0, len(data), _RECORD_SIZE):
-                ts_us, ax, ay, az = struct.unpack_from(_RECORD_FMT, data, offset)
-                f.write(f'{ts_us * 1000},{ax:.4f},{ay:.4f},{az:.4f}\n')
-
-        records = len(data) // _RECORD_SIZE
-        print(f'Saved {out_path} ({os.path.getsize(out_path)} bytes, {records} samples)')
+        if args.file:
+            # Pull a specific file
+            if args.file not in flights:
+                sys.exit(f'ERROR: {args.file} not found on device')
+            if flights[args.file] == 0:
+                sys.exit(f'ERROR: {args.file} is empty')
+            if not _pull_one(dev, args.file, flights[args.file]):
+                sys.exit(1)
+        else:
+            # Pull all non-zero files that don't already have a local CSV
+            to_pull = sorted(
+                (f, sz) for f, sz in flights.items()
+                if sz > 0 and not os.path.exists(f + '.csv')
+            )
+            if not to_pull:
+                total_nonzero = sum(1 for sz in flights.values() if sz > 0)
+                if total_nonzero == 0:
+                    sys.exit('No flight data on device.')
+                print(f'All {total_nonzero} flight file(s) already pulled.')
+                return
+            print(f'{len(to_pull)} file(s) to pull '
+                  f'({sum(sz for _, sz in to_pull)} bytes total)')
+            failed = []
+            for f, sz in to_pull:
+                if not _pull_one(dev, f, sz):
+                    failed.append(f)
+            if failed:
+                print(f'FAILED: {", ".join(failed)}', file=sys.stderr)
+                sys.exit(1)
 
 
 def cmd_df(device, args):
@@ -542,8 +562,8 @@ def main():
     p.add_argument('file')
     p = sub.add_parser('rm',   help='Delete a specific flight file from device')
     p.add_argument('file')
-    p = sub.add_parser('pull', help='Download flight CSV to local file (default: most recent)')
-    p.add_argument('file', nargs='?', help='Flight filename (default: most recent non-empty)')
+    p = sub.add_parser('pull', help='Download flight CSV (default: all new non-empty files)')
+    p.add_argument('file', nargs='?', help='Flight filename (default: all non-empty without local CSV)')
     sub.add_parser('df',   help='Show storage usage and flight list')
     p = sub.add_parser('wipe', help='Delete flight file(s) from device (default: all)')
     p.add_argument('file', nargs='?', help='Flight filename (default: all, with confirmation)')

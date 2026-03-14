@@ -65,8 +65,8 @@ The logger continuously monitors acceleration magnitude. When it exceeds 3g for 
 ./mission-control monitor              # stream raw serial output (Ctrl-C to stop)
 ./mission-control diag                 # verify device health
 ./mission-control df                   # show storage usage and flight list
-./mission-control pull                 # download most recent flight
-./mission-control pull flight_001.csv  # download specific file
+./mission-control pull                 # download all new flights (skips already-pulled)
+./mission-control pull flight_001      # download specific file
 ./mission-control wipe                 # delete all flights
 ./mission-control wipe flight_001.csv  # delete specific file
 ```

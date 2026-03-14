@@ -116,7 +116,7 @@ Do not write to SPIFFS from `flight_task`. Any synchronous flash call (including
 
 - A zero-length "ready" file (`flight_NNN`) is pre-opened at boot and after each cooldown — no file-open latency at launch detection.
 - Flight files contain packed binary records (`flight_record_t`, 20 bytes each: `int64_t timestamp_us`, `float ax_g`, `float ay_g`, `float az_g`). Python struct format: `'<qfff'`.
-- `mission-control pull` fetches raw binary via `cat` and converts to CSV locally.
+- `mission-control pull` fetches raw binary via `cat` and converts to CSV locally. With no argument it pulls all non-zero files that don't already have a local `.csv`; a filename argument pulls that file specifically.
 - Flight number is persisted in NVS (namespace `force4`, key `flight_num`) and survives SPIFFS wipes.
 - Numbers wrap 999 → 000.
 - On boot, if the NVS counter points to a non-empty file (crash mid-flight), the counter is advanced to preserve the partial recording.

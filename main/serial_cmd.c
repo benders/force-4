@@ -1,8 +1,10 @@
 #include "serial_cmd.h"
 #include "storage.h"
 #include "flight_logger.h"
+#include "driver/usb_serial_jtag_vfs.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_vfs_dev.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdio.h>
@@ -53,6 +55,9 @@ static void cmd_cat(const char *filename)
         return;
     }
 
+    /* Disable LF→CRLF conversion for raw binary output */
+    usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_LF);
+
     uint8_t buf[512];
     size_t n;
     int chunk = 0;
@@ -64,6 +69,9 @@ static void cmd_cat(const char *filename)
         }
     }
     fclose(f);
+
+    /* Restore default CRLF conversion for normal text output */
+    usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
 }
 
 static void cmd_rm(const char *filename)

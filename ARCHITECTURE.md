@@ -47,7 +47,7 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 - Boot marker: `FORCE4:READY\n` (printed at startup for diagnostics; mission-control does not wait for it)
 - Response framing: `---BEGIN---\n` ... `---END---\n` around every command response
 - Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `trigger`, `transfer`, `resume`, `ping`, `help`
-- `cat` returns a `size:<N>\n` header line followed by raw binary (512-byte chunks via `fwrite`). `mission-control pull` uses `Device.read_binary()` to read exactly N bytes with progress output, then converts binary → CSV locally
+- `cat` returns a `size:<N>\n` header line followed by raw binary (512-byte chunks via `fwrite`). LF→CRLF conversion is disabled before binary output and restored after — without this, VFS inserts `\r` before every `\n` (0x0A) byte in the binary data. `mission-control pull` uses `Device.read_binary()` to read exactly N bytes with progress output, then converts binary → CSV locally
 
 ## Partition layout
 

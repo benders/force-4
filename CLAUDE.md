@@ -25,6 +25,7 @@ SCLK=GPIO7 (D8), MOSI=GPIO9 (D10), MISO=GPIO8 (D9), CS=GPIO2 (D1), INT1=GPIO4 (D
 
 - Every command response is wrapped in `---BEGIN---\n` / `---END---\n`
 - `serial_cmd_task` prints `FORCE4:READY\n` at boot
+- **Binary output must disable VFS newline conversion** (`usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_LF)`) before `fwrite` and restore CRLF after — otherwise the VFS inserts `\r` before every `0x0A` byte in binary data
 - See `ARCHITECTURE.md` for full command list and framing details
 
 ## CSV format (must match force-3)

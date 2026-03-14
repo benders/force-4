@@ -7,6 +7,7 @@
 #include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static const char *TAG = "serial_cmd";
 
@@ -37,18 +38,29 @@ static void cmd_cat(const char *filename)
 
     char path[48];
     snprintf(path, sizeof(path), "/spiffs/%s", filename);
-    FILE *f = fopen(path, "r");
+
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        printf("Error: cannot stat %s\n", filename);
+        return;
+    }
+    printf("size:%ld\n", (long)st.st_size);
+    fflush(stdout);
+
+    FILE *f = fopen(path, "rb");
     if (!f) {
         printf("Error: cannot open %s\n", filename);
         return;
     }
 
-    char line[128];
-    int count = 0;
-    while (fgets(line, sizeof(line), f)) {
-        fputs(line, stdout);
-        if (++count % 256 == 0) {
-            vTaskDelay(1); /* yield to IDLE so it can reset its WDT subscription */
+    uint8_t buf[512];
+    size_t n;
+    int chunk = 0;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        fwrite(buf, 1, n, stdout);
+        fflush(stdout);
+        if (++chunk % 8 == 0) {
+            vTaskDelay(1); /* yield so IDLE task can reset its WDT subscription */
         }
     }
     fclose(f);

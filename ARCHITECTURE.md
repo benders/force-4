@@ -18,7 +18,7 @@ ESP-IDF v5.4 application running two FreeRTOS tasks on an ESP32-S3.
 main.c            Boot sequence, GPIO mode select, task creation
 adxl375.c/.h      ADXL375 sensor driver (SPI, 4 MHz, Mode 3; see reference/ADXL375.md)
 flight_logger.c/.h  State machine + ring buffer + CSV recording
-storage.c/.h      SPIFFS mount, flight file lifecycle, CSV writing
+storage.c/.h      SPIFFS mount, flight file lifecycle, binary record writing
 serial_cmd.c/.h   Command dispatch, response framing
 led.c/.h          LEDC PWM patterns (breathe, flash, transfer, blink)
 ```
@@ -37,7 +37,7 @@ IDLE --(|a| > 3g for 50ms)--> LOGGING --(60s)--> COOLDOWN --(3s)--> IDLE
 1. `flight_task` (Core 1) drains ADXL375 FIFO (up to 32 samples/read via SPI burst)
 2. In IDLE: samples go into a 1600-entry pre-trigger ring buffer (2s at 800 Hz)
 3. On launch detect: pre-trigger buffer + live samples are pushed into a 16,000-entry PSRAM ring buffer (`s_log_ring`)
-4. `log_write_task` (Core 0) drains `s_log_ring` → SPIFFS. Flash erase stalls only Core 0; `flight_task` keeps reading the FIFO uninterrupted
+4. `log_write_task` (Core 0) drains `s_log_ring` → binary records on SPIFFS. Flash erase stalls only Core 0; `flight_task` keeps reading the FIFO uninterrupted
 5. After 60s: `flight_task` signals flush, `log_write_task` closes the file, 3s cooldown, return to IDLE
 
 ## Serial protocol
@@ -47,6 +47,7 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 - Boot marker: `FORCE4:READY\n` (printed at startup for diagnostics; mission-control does not wait for it)
 - Response framing: `---BEGIN---\n` ... `---END---\n` around every command response
 - Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `trigger`, `transfer`, `resume`, `ping`, `help`
+- `cat` returns a `size:<N>\n` header line followed by raw binary (512-byte chunks via `fwrite`). `mission-control pull` uses `Device.read_binary()` to read exactly N bytes with progress output, then converts binary → CSV locally
 
 ## Partition layout
 
@@ -103,7 +104,7 @@ SPIFFS sector erases (200–400 ms) stall both CPU cores by default. At 800 Hz t
 
 2. **Dual-task architecture** — `flight_task` (Core 1) only reads the FIFO into `s_log_ring`; `log_write_task` (Core 0) handles all SPIFFS writes. Even if `log_write_task` blocks during an erase, `flight_task` keeps draining the FIFO uninterrupted.
 
-3. **PSRAM ring buffer** — at 800 Hz, CSV output requires ~27 KB/s but SPIFFS sustains only ~21 KB/s, a deficit of ~168 samples/sec. Over a 60 s flight this accumulates ~10,080 samples. `s_log_ring` holds 16,000 entries (~20 s at 800 Hz) allocated from PSRAM via `heap_caps_malloc(MALLOC_CAP_SPIRAM)`, providing ~14,000 samples of headroom above the worst-case deficit.
+3. **PSRAM ring buffer** — binary records are 20 bytes/sample, so 800 Hz requires ~16 KB/s, well within SPIFFS's ~21 KB/s sustained throughput. `s_log_ring` holds 16,000 entries (~20 s at 800 Hz) allocated from PSRAM via `heap_caps_malloc(MALLOC_CAP_SPIRAM)`, absorbing erase stalls (200–400 ms each) rather than compensating for a throughput deficit.
 
 Do not write to SPIFFS from `flight_task`. Any synchronous flash call (including `fflush`) from the FIFO-reading task reintroduces gaps.
 
@@ -113,7 +114,9 @@ Do not write to SPIFFS from `flight_task`. Any synchronous flash call (including
 
 ## Flight file lifecycle
 
-- A zero-length "ready" file (`flight_NNN.csv`) is pre-opened at boot and after each cooldown — no file-open latency at launch detection.
+- A zero-length "ready" file (`flight_NNN`) is pre-opened at boot and after each cooldown — no file-open latency at launch detection.
+- Flight files contain packed binary records (`flight_record_t`, 20 bytes each: `int64_t timestamp_us`, `float ax_g`, `float ay_g`, `float az_g`). Python struct format: `'<qfff'`.
+- `mission-control pull` fetches raw binary via `cat` and converts to CSV locally.
 - Flight number is persisted in NVS (namespace `force4`, key `flight_num`) and survives SPIFFS wipes.
 - Numbers wrap 999 → 000.
 - On boot, if the NVS counter points to a non-empty file (crash mid-flight), the counter is advanced to preserve the partial recording.

@@ -147,6 +147,9 @@ void flight_logger_enter_transfer(void)
     s_transfer_entry_us = esp_timer_get_time();
     state = FLIGHT_STATE_TRANSFER;
 
+    // Suppress log output so ESP_LOGI lines cannot interleave with serial responses
+    esp_log_level_set("*", ESP_LOG_NONE);
+
     // Wake flight_task if blocked on interrupt wait
     if (s_flight_task_handle) {
         xTaskNotifyGive(s_flight_task_handle);
@@ -155,6 +158,7 @@ void flight_logger_enter_transfer(void)
 
 void flight_logger_exit_transfer(void)
 {
+    esp_log_level_set("*", ESP_LOG_INFO);
     s_exit_transfer = true;
 }
 
@@ -279,8 +283,6 @@ void flight_task(void *pvParameters)
             if (s_manual_trigger) {
                 s_manual_trigger = false;
                 if (flight_file) {
-                    fprintf(flight_file, "timestamp_ns,ax_g,ay_g,az_g\n");
-
                     // Copy pre-trigger buffer into ring (RAM→RAM)
                     int start = (pre_buf_head - pre_buf_count + PRE_BUF_SIZE) % PRE_BUF_SIZE;
                     for (int j = 0; j < pre_buf_count; j++) {
@@ -353,9 +355,6 @@ void flight_task(void *pvParameters)
                         launch_count++;
                         if (launch_count >= LAUNCH_HOLD_SAMPLES) {
                             if (flight_file) {
-                                // Write CSV header (goes to setvbuf RAM — no flash I/O)
-                                fprintf(flight_file, "timestamp_ns,ax_g,ay_g,az_g\n");
-
                                 // Copy pre-trigger buffer into ring (RAM→RAM, instant)
                                 int start = (pre_buf_head - pre_buf_count + PRE_BUF_SIZE) % PRE_BUF_SIZE;
                                 for (int j = 0; j < pre_buf_count; j++) {

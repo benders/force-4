@@ -12,7 +12,7 @@ Data commands (device enters TRANSFER state for the duration):
   ls              List flight files on device
   cat <file>      Print flight file contents
   rm  <file>      Delete a specific flight file
-  pull [file]     Download flight CSV (default: most recent non-empty)
+  pull [file]     Download flight data as CSV (binary on device, converted on pull)
   df              Show storage usage and flight list
   wipe [file]     Delete flight file(s) (default: all, with confirmation)
   diag            Run device health diagnostics
@@ -24,6 +24,7 @@ No third-party packages required — uses only Python stdlib.
 import argparse
 import glob as _glob
 import os
+import struct
 import sys
 import termios
 import time
@@ -105,6 +106,89 @@ class Device:
         if begin >= 0:
             return text[begin + len(_BEGIN):end if end >= 0 else len(text)].strip()
         return text.strip() or None
+
+    def read_binary(self, cmd, nbytes, progress_cb=None, timeout=300.0):
+        """Send a command and read exactly nbytes of raw binary after the size header.
+
+        Expects: ---BEGIN---\\n size:N\\n <N raw bytes> ---END---\\n
+        Returns the raw bytes. Raises RuntimeError on timeout or short read.
+        """
+        termios.tcflush(self._fd, termios.TCIFLUSH)
+        os.write(self._fd, (cmd + '\r\n').encode())
+
+        buf      = b''
+        deadline = time.monotonic() + timeout
+        last_rx  = time.monotonic()
+
+        # Phase 1: read lines until we've seen ---BEGIN--- and size: header
+        begun = False
+        while time.monotonic() < deadline:
+            try:
+                chunk = os.read(self._fd, 4096)
+                if chunk:
+                    buf     += chunk
+                    last_rx  = time.monotonic()
+                    deadline = max(deadline, last_rx + 2.0)
+                    while b'\n' in buf:
+                        line, buf = buf.split(b'\n', 1)
+                        text = line.decode(errors='replace').strip()
+                        if not begun:
+                            if text == _BEGIN:
+                                begun = True
+                            continue
+                        if text.startswith('size:'):
+                            # Remaining buf is start of binary data
+                            break
+                    else:
+                        continue
+                    break  # got size header, buf has binary data start
+                else:
+                    time.sleep(0.01)
+            except BlockingIOError:
+                time.sleep(0.01)
+        else:
+            raise RuntimeError('timeout waiting for size header')
+
+        # Phase 2: read exactly nbytes of raw binary
+        data = buf[:nbytes]
+        buf  = buf[nbytes:]  # may contain ---END---
+        if progress_cb and len(data):
+            progress_cb(len(data))
+        while len(data) < nbytes:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f'timeout during binary read ({len(data)}/{nbytes} bytes)')
+            try:
+                chunk = os.read(self._fd, min(4096, nbytes - len(data)))
+                if chunk:
+                    data    += chunk
+                    last_rx  = time.monotonic()
+                    deadline = max(deadline, last_rx + 2.0)
+                    if progress_cb:
+                        progress_cb(len(data))
+                else:
+                    time.sleep(0.01)
+            except BlockingIOError:
+                if time.monotonic() - last_rx > 2.0:
+                    raise RuntimeError(
+                        f'idle gap during binary read ({len(data)}/{nbytes} bytes)')
+                time.sleep(0.01)
+
+        # Phase 3: drain until ---END--- (best-effort, don't fail if missing)
+        end_deadline = time.monotonic() + 2.0
+        while time.monotonic() < end_deadline:
+            try:
+                chunk = os.read(self._fd, 4096)
+                if chunk:
+                    buf += chunk
+                    if b'---END---' in buf:
+                        break
+                else:
+                    time.sleep(0.01)
+            except BlockingIOError:
+                time.sleep(0.01)
+
+        return data
 
     def send(self, cmd, timeout=4.0):
         """Send a command and return extracted response text, or exit on failure."""
@@ -221,7 +305,18 @@ def cmd_ls(device, args):
 
 def cmd_cat(device, args):
     with _transfer(device) as dev:
-        print(dev.send(f'cat {args.file}', timeout=60))
+        flights = {f: sz for f, sz in _parse_ls(dev.send('ls'))}
+        if args.file not in flights:
+            sys.exit(f'ERROR: {args.file} not found')
+        nbytes = flights[args.file]
+        if nbytes == 0:
+            print(f'{args.file}: empty')
+            return
+        data = dev.read_binary(f'cat {args.file}', nbytes)
+        for offset in range(0, len(data), 16):
+            chunk = data[offset:offset + 16]
+            hex_part = ' '.join(f'{b:02x}' for b in chunk)
+            print(f'{offset:08x}  {hex_part}')
 
 
 def cmd_rm(device, args):
@@ -235,6 +330,10 @@ def cmd_rm(device, args):
         print(f'Deleted {args.file}')
 
 
+_RECORD_FMT  = '<qfff'
+_RECORD_SIZE = struct.calcsize(_RECORD_FMT)  # 20 bytes
+
+
 def cmd_pull(device, args):
     with _transfer(device) as dev:
         filename = args.file
@@ -244,11 +343,51 @@ def cmd_pull(device, args):
             if not candidates:
                 sys.exit('No flight data on device.')
             filename = candidates[-1]
-        print(f'Downloading {filename} ...')
-        content = dev.send(f'cat {filename}', timeout=60)
-        with open(filename, 'w') as f:
-            f.write(content + '\n')
-        print(f'Saved {filename} ({os.path.getsize(filename)} bytes)')
+
+        # Get file size via send() first (parses the size: header from cat output)
+        # We use a quick send to get the size header, but that also reads the data.
+        # Instead, get size from ls output.
+        flights = {f: sz for f, sz in _parse_ls(dev.send('ls'))}
+        if filename not in flights:
+            sys.exit(f'ERROR: {filename} not found on device')
+        expected_bytes = flights[filename]
+        if expected_bytes == 0:
+            sys.exit(f'ERROR: {filename} is empty')
+        expected_records = expected_bytes // _RECORD_SIZE
+        print(f'Downloading {filename} ({expected_bytes} bytes, '
+              f'{expected_records} samples) ...')
+
+        def progress(received):
+            pct = received * 100 // expected_bytes
+            print(f'\r  {received}/{expected_bytes} bytes ({pct}%)',
+                  end='', flush=True)
+
+        try:
+            data = dev.read_binary(f'cat {filename}',
+                                   expected_bytes, progress_cb=progress)
+        except RuntimeError as e:
+            print(f'\nERROR: transfer failed: {e}')
+            sys.exit(1)
+
+        print()  # newline after progress
+
+        if len(data) != expected_bytes:
+            print(f'ERROR: received {len(data)} bytes but expected {expected_bytes}')
+            sys.exit(1)
+
+        if len(data) % _RECORD_SIZE != 0:
+            sys.exit(f'ERROR: {len(data)} bytes is not a multiple of '
+                     f'{_RECORD_SIZE} (corrupt file?)')
+
+        out_path = filename + '.csv'
+        with open(out_path, 'w') as f:
+            f.write('timestamp_ns,ax_g,ay_g,az_g\n')
+            for offset in range(0, len(data), _RECORD_SIZE):
+                ts_us, ax, ay, az = struct.unpack_from(_RECORD_FMT, data, offset)
+                f.write(f'{ts_us * 1000},{ax:.4f},{ay:.4f},{az:.4f}\n')
+
+        records = len(data) // _RECORD_SIZE
+        print(f'Saved {out_path} ({os.path.getsize(out_path)} bytes, {records} samples)')
 
 
 def cmd_df(device, args):

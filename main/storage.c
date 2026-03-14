@@ -42,7 +42,8 @@ int storage_next_flight_number(void)
     struct dirent *ent;
     while ((ent = readdir(dir)) != NULL) {
         int n;
-        if (sscanf(ent->d_name, "flight_%d.csv", &n) == 1) {
+        char extra;
+        if (sscanf(ent->d_name, "flight_%d%c", &n, &extra) == 1) {
             if (n > max_n) max_n = n;
         }
     }
@@ -82,9 +83,9 @@ void storage_save_flight_counter(int n)
 FILE *storage_open_flight(int n)
 {
     char path[48];
-    snprintf(path, sizeof(path), "%s/flight_%03d.csv", MOUNT_POINT, n);
+    snprintf(path, sizeof(path), "%s/flight_%03d", MOUNT_POINT, n);
 
-    FILE *f = fopen(path, "w");
+    FILE *f = fopen(path, "wb");
     if (!f) {
         ESP_LOGE(TAG, "Failed to open %s: %s", path, strerror(errno));
         return NULL;
@@ -98,11 +99,13 @@ void storage_write_samples(FILE *f, const adxl375_sample_t *samples, int count)
 {
     if (!f) return;
     for (int i = 0; i < count; i++) {
-        // Convert microseconds to nanoseconds for CSV
-        int64_t ts_ns = samples[i].timestamp_us * 1000LL;
-        fprintf(f, "%lld,%.4f,%.4f,%.4f\n",
-                (long long)ts_ns,
-                samples[i].ax_g, samples[i].ay_g, samples[i].az_g);
+        flight_record_t rec = {
+            .timestamp_us = samples[i].timestamp_us,
+            .ax_g = samples[i].ax_g,
+            .ay_g = samples[i].ay_g,
+            .az_g = samples[i].az_g,
+        };
+        fwrite(&rec, sizeof(rec), 1, f);
     }
 }
 

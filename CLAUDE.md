@@ -33,7 +33,7 @@ SCLK=GPIO7 (D8), MOSI=GPIO9 (D10), MISO=GPIO8 (D9), CS=GPIO2 (D1), INT1=GPIO4 (D
 timestamp_ns,ax_g,ay_g,az_g
 ```
 
-Internal timestamps are microseconds; multiply by 1000 for the CSV nanosecond column.
+Flight data is stored as packed binary records on the device (`flight_NNN`, no `.csv` extension). `mission-control pull` converts binary → CSV on the host. Internal timestamps are microseconds; multiply by 1000 for the CSV nanosecond column.
 
 ## PSRAM
 
@@ -50,8 +50,6 @@ After power-on, allow ~12 s before running `mission-control` commands. On first 
 ## mission-control
 
 After `wipe` or `rm`, wait ~3 s before the next `status` call — trailing log bytes in the serial buffer can confuse response parsing. The `wipe` command retries `resume` up to 3 times internally; if all retries fail the device auto-resumes after its 30 s TRANSFER timeout.
-
-When pulling large flight files, `ESP_LOGI` messages from the firmware may be interleaved into the CSV content. Filter non-numeric rows when analysing: `[r for r in csv.DictReader(f) if r['timestamp_ns'].strip().isdigit()]`.
 
 ## Architecture and code conventions
 

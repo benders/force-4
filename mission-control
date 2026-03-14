@@ -152,7 +152,8 @@ class Device:
         # Phase 2: read exactly nbytes of raw binary
         data = buf[:nbytes]
         buf  = buf[nbytes:]  # may contain ---END---
-        if progress_cb and len(data):
+        chunks_read = 1 if data else 0
+        if progress_cb and chunks_read and chunks_read % 10 == 0:
             progress_cb(len(data))
         while len(data) < nbytes:
             if time.monotonic() >= deadline:
@@ -164,7 +165,8 @@ class Device:
                     data    += chunk
                     last_rx  = time.monotonic()
                     deadline = max(deadline, last_rx + 2.0)
-                    if progress_cb:
+                    chunks_read += 1
+                    if progress_cb and chunks_read % 10 == 0:
                         progress_cb(len(data))
                 else:
                     time.sleep(0.01)
@@ -173,6 +175,9 @@ class Device:
                     raise RuntimeError(
                         f'idle gap during binary read ({len(data)}/{nbytes} bytes)')
                 time.sleep(0.01)
+
+        if progress_cb and chunks_read % 10 != 0:
+            progress_cb(len(data))
 
         # Phase 3: drain until ---END--- (best-effort, don't fail if missing)
         end_deadline = time.monotonic() + 2.0

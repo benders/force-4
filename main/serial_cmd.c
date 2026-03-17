@@ -148,11 +148,13 @@ static void cmd_help(void)
     printf("  go              Send pending binary transfer (after cat)\n");
     printf("  abort           Cancel pending binary transfer\n");
     printf("  help            Show this help\n");
+    printf("  format          Format flash (SPIFFS); NVS preserved (requires transfer)\n");
 #ifdef CONFIG_FORCE4_SD_CARD
     printf("SD card commands:\n");
     printf("  ls --sd         List SD card files\n");
     printf("  cat --sd <file> Prepare SD file for transfer (follow with 'go')\n");
     printf("  rm --sd <file>  Delete SD card file\n");
+    printf("  format --sd     Format SD card (requires transfer)\n");
     printf("  sdtest [N]      Write N-byte test pattern to SD (default 1024)\n");
     printf("  sdinfo          Show SD card status and free space\n");
 #endif
@@ -280,6 +282,24 @@ static void process_line(char *line)
             }
         }
 #endif
+    } else if (strcmp(line, "format") == 0) {
+        if (flight_logger_get_state() != FLIGHT_STATE_TRANSFER) {
+            printf("denied: requires transfer state (send 'transfer' first)\n");
+#ifdef CONFIG_FORCE4_SD_CARD
+        } else if (use_sd) {
+            if (sdcard_format()) {
+                printf("ok\n");
+            } else {
+                printf("error: SD format failed\n");
+            }
+#endif
+        } else {
+            if (storage_format()) {
+                printf("ok\n");
+            } else {
+                printf("error: flash format failed\n");
+            }
+        }
     } else if (strcmp(line, "help") == 0) {
         cmd_help();
     } else {

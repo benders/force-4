@@ -153,6 +153,21 @@ void sdcard_print_info(void)
            (double)free_bytes / (1024.0 * 1024.0 * 1024.0));
 }
 
+bool sdcard_format(void)
+{
+    if (!s_mounted) {
+        printf("error: SD card not mounted\n");
+        return false;
+    }
+    esp_err_t err = esp_vfs_fat_sdcard_format(SD_MOUNT_POINT, s_card);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "SD format failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    ESP_LOGI(TAG, "SD card formatted");
+    return true;
+}
+
 bool sdcard_write_test(const char *filename, size_t nbytes)
 {
     if (!s_mounted) {

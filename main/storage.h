@@ -67,3 +67,10 @@ void storage_list_flights(void);
  * Delete a file from SPIFFS. Returns true on success.
  */
 bool storage_delete_file(const char *filename);
+
+/**
+ * Format the SPIFFS partition. NVS is unaffected.
+ * The partition is unmounted, formatted, and remounted.
+ * Returns true on success.
+ */
+bool storage_format(void);

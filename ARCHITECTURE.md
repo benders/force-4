@@ -48,7 +48,7 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 
 - Boot marker: `FORCE4:READY\n` (printed at startup for diagnostics; mission-control does not wait for it)
 - Response framing: `---BEGIN---\n` ... `---END---\n` around every command response
-- Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `trigger`, `transfer`, `resume`, `ping`, `go`, `abort`, `help` (plus `ls --sd`, `cat --sd <file>`, `rm --sd <file>`, `sdtest [N]`, `sdinfo` when SD enabled; `photo` when camera enabled)
+- Commands: `ls`, `cat <file>`, `rm <file>`, `format`, `status`, `trigger`, `transfer`, `resume`, `ping`, `go`, `abort`, `help` (plus `ls --sd`, `cat --sd <file>`, `rm --sd <file>`, `format --sd`, `sdtest [N]`, `sdinfo` when SD enabled; `photo` when camera enabled)
 - **Two-step binary transfer protocol** (receiver-initiated, inspired by XModem):
   1. `cat <file>` (or `cat --sd <file>`) prepares the transfer and responds with `ready size:N\n` inside the normal `---BEGIN---`/`---END---` framing. No binary is sent yet.
   2. `go` — sent by the host when ready — streams exactly N raw bytes with **no framing whatsoever**. LF→CRLF conversion is disabled before and restored after. `go` returns immediately (no `---BEGIN---`/`---END---`).
@@ -180,10 +180,13 @@ Observed layout on the test 32 GB card:
 | `ls --sd`         | List files on SD card                                     |
 | `cat --sd <file>` | Prepare SD file for transfer; returns `ready size:N`      |
 | `rm --sd <file>`  | Delete file from SD card                                  |
+| `format --sd`     | Format SD card as FAT (requires TRANSFER state)           |
 | `sdtest [N]`      | Write N-byte cycling pattern to `test_sd` on SD           |
 | `sdinfo`          | Print mount status, card capacity, and FATFS cluster info |
 
-`mission-control` supports `--sd` on `ls`, `cat`, `rm`, `pull`, `df`, `wipe`, plus `sdtest` and `sdinfo` subcommands.
+`mission-control` supports `--sd` on `ls`, `cat`, `rm`, `pull`, `df`, `wipe`, `format`, plus `sdtest` and `sdinfo` subcommands.
+
+`format` (no `--sd`) reformats the SPIFFS `storage` partition via `esp_spiffs_format()`, which unmounts, erases, and remounts the filesystem. NVS (flight counter) is in a separate partition and is unaffected. Requires TRANSFER state.
 
 ## Camera (optional)
 

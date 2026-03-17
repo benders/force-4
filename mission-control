@@ -9,13 +9,14 @@ Quick commands (no TRANSFER state):
   monitor  Stream raw serial output (read-only, Ctrl-C to stop)
 
 Data commands (device enters TRANSFER state for the duration):
-  ls   [--sd]          List flight files on device (or SD card)
-  cat  [--sd] <file>   Print flight file contents
-  rm   [--sd] <file>   Delete a specific flight file
-  pull [--sd] [file]   Download flight data as CSV (default: all new files)
-  df   [--sd]          Show storage usage and flight list
-  wipe [--sd] [file]   Delete flight file(s) (default: all, with confirmation)
-  diag                 Run device health diagnostics
+  ls     [--sd]          List flight files on device (or SD card)
+  cat    [--sd] <file>   Print flight file contents
+  rm     [--sd] <file>   Delete a specific flight file
+  pull   [--sd] [file]   Download flight data as CSV (default: all new files)
+  df     [--sd]          Show storage usage and flight list
+  wipe   [--sd] [file]   Delete flight file(s) (default: all, with confirmation)
+  format [--sd|--flash]  Format SD card or flash (SPIFFS); NVS is preserved
+  diag                   Run device health diagnostics
 
 SD card commands:
   sdtest [--bytes N]   Write/verify test pattern on SD card
@@ -577,6 +578,20 @@ def cmd_monitor(port, args):
         os.close(fd)
 
 
+def cmd_format(device, args):
+    sd = _sd_prefix(args)
+    target = 'SD card' if sd else 'flash'
+    confirm = input(f'Format {target}? This will erase all data. [y/N] ')
+    if confirm.lower() != 'y':
+        sys.exit('Aborted.')
+    with _transfer(device) as dev:
+        print(f'Formatting {target} ...')
+        result = dev.send(f'format {sd}'.strip(), timeout=60.0)
+        if 'error' in result.lower() or 'denied' in result.lower():
+            sys.exit(f'FAILED: {result}')
+        print(f'{target.capitalize()} formatted successfully')
+
+
 def cmd_sdtest(device, args):
     nbytes = args.bytes
     with _transfer(device) as dev:
@@ -702,6 +717,7 @@ _COMMANDS = {
     'pull':    cmd_pull,
     'df':      cmd_df,
     'wipe':    cmd_wipe,
+    'format':  cmd_format,
     'diag':    cmd_diag,
     # sd card
     'sdtest':  cmd_sdtest,
@@ -752,6 +768,8 @@ def main():
     _add_storage_flag(p)
     p = sub.add_parser('wipe', help='Delete flight file(s) from device (default: all)')
     p.add_argument('file', nargs='?', help='Flight filename (default: all, with confirmation)')
+    _add_storage_flag(p)
+    p = sub.add_parser('format', help='Format SD card or flash storage (NVS preserved)')
     _add_storage_flag(p)
     sub.add_parser('diag', help='Run device health diagnostics')
 

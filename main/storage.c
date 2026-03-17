@@ -149,6 +149,17 @@ void storage_list_flights(void)
     }
 }
 
+bool storage_format(void)
+{
+    esp_err_t err = esp_spiffs_format("storage");
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "SPIFFS format failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    ESP_LOGI(TAG, "SPIFFS formatted and remounted");
+    return true;
+}
+
 bool storage_delete_file(const char *filename)
 {
     char path[48];

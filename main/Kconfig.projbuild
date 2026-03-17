@@ -1,0 +1,8 @@
+menu "Force-4 Configuration"
+    config FORCE4_SD_CARD
+        bool "Enable SD card support (XIAO Sense expansion board)"
+        default n
+        help
+            Enable microSD card support via SPI on GPIO21 (CS).
+            Requires the XIAO ESP32-S3 Sense expansion board.
+endmenu

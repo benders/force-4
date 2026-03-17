@@ -10,14 +10,15 @@ typedef struct {
 } adxl375_sample_t;
 
 /**
- * Initialize SPI bus and ADXL375 sensor.
+ * Initialize ADXL375 sensor on an already-initialized SPI bus (SPI2_HOST).
+ * Only adds the SPI device and configures the sensor.
  * Returns true on success, false if sensor not found.
  */
-bool adxl375_init(gpio_num_t mosi, gpio_num_t miso, gpio_num_t sclk, gpio_num_t cs);
+bool adxl375_init_on_bus(gpio_num_t cs);
 
 /**
- * Tear down and re-initialize SPI bus + sensor (used for reconnect after failure).
- * adxl375_init() must have been called at least once to record the GPIO pins.
+ * Remove and re-add the SPI device, then reconfigure the sensor.
+ * Does NOT free the SPI bus (bus is shared).
  */
 bool adxl375_reinit(void);
 

@@ -10,11 +10,16 @@
 #include "esp_task_wdt.h"
 #include "nvs_flash.h"
 
+#include "driver/spi_master.h"
+
 #include "led.h"
 #include "adxl375.h"
 #include "storage.h"
 #include "flight_logger.h"
 #include "serial_cmd.h"
+#ifdef CONFIG_FORCE4_SD_CARD
+#include "sdcard.h"
+#endif
 
 static const char *TAG = "main";
 
@@ -72,11 +77,24 @@ void app_main(void)
         ESP_LOGE(TAG, "Storage init failed!");
     }
 
-    // Initialize sensor
-    bool sensor_ok = adxl375_init(GPIO_SPI_MOSI, GPIO_SPI_MISO, GPIO_SPI_SCLK, GPIO_SPI_CS);
+    // Initialize shared SPI bus (ADXL375 + optional SD card share SPI2_HOST)
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num = GPIO_SPI_MOSI,
+        .miso_io_num = GPIO_SPI_MISO,
+        .sclk_io_num = GPIO_SPI_SCLK,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 4096,
+    };
+    esp_err_t spi_err = spi_bus_initialize(SPI2_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
+    if (spi_err != ESP_OK) {
+        ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(spi_err));
+    }
+
+    // Initialize sensor (bus already initialized)
+    bool sensor_ok = adxl375_init_on_bus(GPIO_SPI_CS);
     if (!sensor_ok) {
         ESP_LOGE(TAG, "ADXL375 init failed — will retry");
-        // Retry loop for sensor reconnection
         for (int i = 0; i < 60 && !sensor_ok; i++) {
             vTaskDelay(pdMS_TO_TICKS(5000));
             sensor_ok = adxl375_reinit();
@@ -85,6 +103,12 @@ void app_main(void)
             }
         }
     }
+
+#ifdef CONFIG_FORCE4_SD_CARD
+    if (!sdcard_init()) {
+        ESP_LOGW(TAG, "SD card not available");
+    }
+#endif
 
     if (g_flight_mode) {
         ESP_LOGI(TAG, "Starting flight mode");

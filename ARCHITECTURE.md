@@ -15,12 +15,13 @@ ESP-IDF v5.4 application running two FreeRTOS tasks on an ESP32-S3.
 ## Modules
 
 ```
-main.c            Boot sequence, GPIO mode select, task creation
+main.c            Boot sequence, GPIO mode select, SPI bus init, task creation
 adxl375.c/.h      ADXL375 sensor driver (SPI, 4 MHz, Mode 3; see reference/ADXL375.md)
 flight_logger.c/.h  State machine + ring buffer + CSV recording
 storage.c/.h      SPIFFS mount, flight file lifecycle, binary record writing
 serial_cmd.c/.h   Command dispatch, response framing
 led.c/.h          LEDC PWM patterns (breathe, flash, transfer, blink)
+sdcard.c/.h       SD card support (ifdef CONFIG_FORCE4_SD_CARD; see below)
 ```
 
 ## State machine
@@ -46,7 +47,7 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 
 - Boot marker: `FORCE4:READY\n` (printed at startup for diagnostics; mission-control does not wait for it)
 - Response framing: `---BEGIN---\n` ... `---END---\n` around every command response
-- Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `trigger`, `transfer`, `resume`, `ping`, `help`
+- Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `trigger`, `transfer`, `resume`, `ping`, `help` (plus `ls --sd`, `cat --sd <file>`, `rm --sd <file>`, `sdtest [N]`, `sdinfo` when SD enabled)
 - `cat` returns a `size:<N>\n` header line followed by raw binary (512-byte chunks via `fwrite`). LF→CRLF conversion is disabled before binary output and restored after — without this, VFS inserts `\r` before every `\n` (0x0A) byte in the binary data. `mission-control pull` uses `Device.read_binary()` to read exactly N bytes with progress output, then converts binary → CSV locally
 
 ## Partition layout
@@ -73,7 +74,7 @@ General ADXL375 notes (activity detection, SPI framing, register reference): `re
 
 ### Connection recovery
 
-SPI has no stuck-bus problem (CS idles high, no shared clock line). If `adxl375_init()` fails (bad DEVID or SPI error), `main.c` retries every 5s for up to 5 minutes via `adxl375_reinit()`, which removes the SPI device, frees the bus, and calls `adxl375_init()` from scratch.
+SPI has no stuck-bus problem (CS idles high, no shared clock line). If `adxl375_init_on_bus()` fails (bad DEVID or SPI error), `main.c` retries every 5s for up to 5 minutes via `adxl375_reinit()`, which removes and re-adds the SPI device (bus remains initialized — it's shared with the SD card).
 
 ## Interrupt-driven idle
 
@@ -130,3 +131,48 @@ Do not write to SPIFFS from `flight_task`. Any synchronous flash call (including
 - `flight_state_t` is `volatile` — set atomically from any task, read only from `flight_task`.
 
 General XIAO ESP32-S3 notes (USB Serial/JTAG setup, flash erase stalls): `reference/XIAO-ESP32S3.md`.
+
+## SD card (optional)
+
+Enabled by `CONFIG_FORCE4_SD_CARD` in `main/Kconfig.projbuild` (default off). All SD code is behind `#ifdef`; when disabled, `sdcard.h` provides no-op inline stubs.
+
+### SPI bus sharing
+
+SPI2_HOST is initialized once in `main.c` (shared by ADXL375 and SD card). Each device is added separately with its own CS pin and SPI mode — ESP-IDF handles per-device mode switching automatically:
+
+| Device  | CS     | SPI Mode | Clock   |
+|---------|--------|----------|---------|
+| ADXL375 | GPIO2  | 3        | 4 MHz   |
+| SD card | GPIO21 | 0        | 20 MHz  |
+
+`adxl375_reinit()` only removes/re-adds its device; it does not free the shared bus.
+
+### Mount and filesystem
+
+SD card is mounted at `/sd` as FAT via `esp_vfs_fat_sdspi_mount()`. If no card is inserted, `sdcard_init()` logs a warning and all SD operations return errors gracefully.
+
+**FAT uppercases filenames.** `test_sd` is stored and returned as `TEST_SD`. Host code that searches for files by name must use case-insensitive comparison; `mission-control sdtest` does this with `f.lower()`.
+
+**Use `uint64_t` for space arithmetic.** `size_t` is 32-bit on ESP32-S3 (max ~4 GiB). A 32 GB card has ~30 GiB of usable space — the product `free_clusters * sectors_per_cluster * 512` overflows silently, producing a wrong result (~1.8 GB reported instead of ~29.7 GiB). `sdcard_print_info()` uses `uint64_t` throughout.
+
+**`sys/statvfs.h` is not available** in ESP-IDF's newlib. Use the FATFS API directly: `f_getfree("0:", &free_clust, &fs)` where `"0:"` is the first mounted FAT volume. `fs->csize` gives sectors per cluster; sector size is 512 bytes when `FF_MIN_SS == FF_MAX_SS == 512` (ESP-IDF default).
+
+Observed layout on the test 32 GB card:
+
+| Field                    | Value                                 |
+|--------------------------|---------------------------------------|
+| Card capacity            | 62,333,952 sectors × 512 B = 29.72 GiB |
+| FAT cluster size         | 32 sectors × 512 B = 16 KiB           |
+| FAT total clusters       | 1,946,888                             |
+
+### Commands
+
+| Command           | Description                                               |
+|-------------------|-----------------------------------------------------------|
+| `ls --sd`         | List files on SD card                                     |
+| `cat --sd <file>` | Binary output of SD card file                             |
+| `rm --sd <file>`  | Delete file from SD card                                  |
+| `sdtest [N]`      | Write N-byte cycling pattern to `test_sd` on SD           |
+| `sdinfo`          | Print mount status, card capacity, and FATFS cluster info |
+
+`mission-control` supports `--sd` on `ls`, `cat`, `rm`, `pull`, `df`, `wipe`, plus `sdtest` and `sdinfo` subcommands.

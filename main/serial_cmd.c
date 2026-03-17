@@ -8,8 +8,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef CONFIG_FORCE4_SD_CARD
+#include "sdcard.h"
+#endif
 
 static const char *TAG = "serial_cmd";
 
@@ -112,6 +116,14 @@ static void cmd_help(void)
     printf("  resume          Exit transfer mode; return to IDLE\n");
     printf("  ping            Connection test\n");
     printf("  help            Show this help\n");
+#ifdef CONFIG_FORCE4_SD_CARD
+    printf("SD card commands:\n");
+    printf("  ls --sd         List SD card files\n");
+    printf("  cat --sd <file> Print SD card file contents\n");
+    printf("  rm --sd <file>  Delete SD card file\n");
+    printf("  sdtest [N]      Write N-byte test pattern to SD (default 1024)\n");
+    printf("  sdinfo          Show SD card status and free space\n");
+#endif
 }
 
 static void process_line(char *line)
@@ -131,14 +143,79 @@ static void process_line(char *line)
         while (*arg == ' ') arg++;
     }
 
+    // Parse --sd flag from argument
+    bool use_sd = false;
+#ifdef CONFIG_FORCE4_SD_CARD
+    if (arg && strncmp(arg, "--sd", 4) == 0) {
+        use_sd = true;
+        arg += 4;
+        while (*arg == ' ') arg++;
+        if (*arg == '\0') arg = NULL;
+    }
+#endif
+
     printf("---BEGIN---\n");
 
     if (strcmp(line, "ls") == 0) {
-        cmd_ls();
+#ifdef CONFIG_FORCE4_SD_CARD
+        if (use_sd) { sdcard_list_files(); }
+        else
+#endif
+        { (void)use_sd; cmd_ls(); }
     } else if (strcmp(line, "cat") == 0) {
-        cmd_cat(arg);
+#ifdef CONFIG_FORCE4_SD_CARD
+        if (use_sd) {
+            if (!arg || *arg == '\0') {
+                printf("Usage: cat --sd <filename>\n");
+            } else if (!sdcard_is_mounted()) {
+                printf("SD card not mounted\n");
+            } else {
+                char path[64];
+                snprintf(path, sizeof(path), "/sd/%s", arg);
+
+                struct stat st;
+                if (stat(path, &st) != 0) {
+                    printf("Error: cannot stat %s\n", arg);
+                } else {
+                    printf("size:%ld\n", (long)st.st_size);
+                    fflush(stdout);
+
+                    FILE *f = fopen(path, "rb");
+                    if (!f) {
+                        printf("Error: cannot open %s\n", arg);
+                    } else {
+                        usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_LF);
+                        uint8_t buf[512];
+                        size_t n;
+                        int chunk = 0;
+                        while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+                            fwrite(buf, 1, n, stdout);
+                            fflush(stdout);
+                            if (++chunk % 8 == 0) {
+                                vTaskDelay(1);
+                            }
+                        }
+                        fclose(f);
+                        usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
+                    }
+                }
+            }
+        } else
+#endif
+        { cmd_cat(arg); }
     } else if (strcmp(line, "rm") == 0) {
-        cmd_rm(arg);
+#ifdef CONFIG_FORCE4_SD_CARD
+        if (use_sd) {
+            if (!arg || *arg == '\0') {
+                printf("Usage: rm --sd <filename>\n");
+            } else if (sdcard_delete_file(arg)) {
+                printf("Deleted %s\n", arg);
+            } else {
+                printf("Error: could not delete %s\n", arg);
+            }
+        } else
+#endif
+        { cmd_rm(arg); }
     } else if (strcmp(line, "status") == 0) {
         cmd_status();
     } else if (strcmp(line, "trigger") == 0) {
@@ -156,6 +233,19 @@ static void process_line(char *line)
         printf("ok\n");
     } else if (strcmp(line, "ping") == 0) {
         printf("pong\n");
+#ifdef CONFIG_FORCE4_SD_CARD
+    } else if (strcmp(line, "sdtest") == 0) {
+        size_t nbytes = 1024;
+        if (arg && *arg != '\0') {
+            nbytes = (size_t)atoi(arg);
+            if (nbytes == 0) nbytes = 1024;
+        }
+        if (sdcard_write_test("test_sd", nbytes)) {
+            printf("ok\n");
+        }
+    } else if (strcmp(line, "sdinfo") == 0) {
+        sdcard_print_info();
+#endif
     } else if (strcmp(line, "help") == 0) {
         cmd_help();
     } else {

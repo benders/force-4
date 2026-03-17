@@ -32,3 +32,6 @@ CONFIG_FREERTOS_HZ=1000
 # so FIFO reads are not stalled by SPIFFS sector erases.
 # Compatible with CONFIG_SPIRAM — do not use EXT_RAM_BSS_ATTR (see CLAUDE.md).
 CONFIG_SPI_FLASH_AUTO_SUSPEND=y
+
+# SD card support (XIAO Sense expansion board, CS=GPIO21 on SPI2_HOST)
+CONFIG_FORCE4_SD_CARD=y

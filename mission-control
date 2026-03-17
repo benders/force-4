@@ -9,13 +9,17 @@ Quick commands (no TRANSFER state):
   monitor  Stream raw serial output (read-only, Ctrl-C to stop)
 
 Data commands (device enters TRANSFER state for the duration):
-  ls              List flight files on device
-  cat <file>      Print flight file contents
-  rm  <file>      Delete a specific flight file
-  pull [file]     Download flight data as CSV (default: all new files)
-  df              Show storage usage and flight list
-  wipe [file]     Delete flight file(s) (default: all, with confirmation)
-  diag            Run device health diagnostics
+  ls   [--sd]          List flight files on device (or SD card)
+  cat  [--sd] <file>   Print flight file contents
+  rm   [--sd] <file>   Delete a specific flight file
+  pull [--sd] [file]   Download flight data as CSV (default: all new files)
+  df   [--sd]          Show storage usage and flight list
+  wipe [--sd] [file]   Delete flight file(s) (default: all, with confirmation)
+  diag                 Run device health diagnostics
+
+SD card commands:
+  sdtest [--bytes N]   Write/verify test pattern on SD card
+  sdinfo               Show SD card mount status and free space
 
 All commands (except 'status' and 'monitor') require the device to be IDLE.
 No third-party packages required — uses only Python stdlib.
@@ -265,6 +269,32 @@ def _parse_ls(output):
     return result
 
 
+def _parse_ls_any(output):
+    """Return list of (filename, size_bytes) for any files from 'ls' output."""
+    result = []
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            try:
+                result.append((parts[0], int(parts[1])))
+            except ValueError:
+                pass
+    return result
+
+
+def _add_storage_flag(p):
+    """Add --sd / --flash mutually exclusive flags to a subparser."""
+    g = p.add_mutually_exclusive_group()
+    g.add_argument('--sd', action='store_true', help='Target SD card')
+    g.add_argument('--flash', action='store_true', default=True,
+                   help='Target flash (default)')
+
+
+def _sd_prefix(args):
+    """Return '--sd ' prefix if targeting SD card, else empty string."""
+    return '--sd ' if getattr(args, 'sd', False) else ''
+
+
 # ---------------------------------------------------------------------------
 # Quick commands — no TRANSFER state required
 # ---------------------------------------------------------------------------
@@ -305,19 +335,21 @@ def cmd_trigger(device, args):
 
 def cmd_ls(device, args):
     with _transfer(device) as dev:
-        print(dev.send('ls'))
+        print(dev.send(f'ls {_sd_prefix(args)}'.strip()))
 
 
 def cmd_cat(device, args):
+    sd = _sd_prefix(args)
     with _transfer(device) as dev:
-        flights = {f: sz for f, sz in _parse_ls(dev.send('ls'))}
-        if args.file not in flights:
+        parse = _parse_ls_any if sd else _parse_ls
+        files = {f: sz for f, sz in parse(dev.send(f'ls {sd}'.strip()))}
+        if args.file not in files:
             sys.exit(f'ERROR: {args.file} not found')
-        nbytes = flights[args.file]
+        nbytes = files[args.file]
         if nbytes == 0:
             print(f'{args.file}: empty')
             return
-        data = dev.read_binary(f'cat {args.file}', nbytes)
+        data = dev.read_binary(f'cat {sd}{args.file}'.strip(), nbytes)
         for offset in range(0, len(data), 16):
             chunk = data[offset:offset + 16]
             hex_part = ' '.join(f'{b:02x}' for b in chunk)
@@ -325,11 +357,13 @@ def cmd_cat(device, args):
 
 
 def cmd_rm(device, args):
-    confirm = input(f'Delete {args.file} from device? [y/N] ')
+    sd = _sd_prefix(args)
+    target = 'SD card' if sd else 'device'
+    confirm = input(f'Delete {args.file} from {target}? [y/N] ')
     if confirm.lower() != 'y':
         sys.exit('Aborted.')
     with _transfer(device) as dev:
-        result = dev.send(f'rm {args.file}')
+        result = dev.send(f'rm {sd}{args.file}'.strip())
         if 'error' in result.lower() or 'denied' in result.lower():
             sys.exit(f'FAILED: {result}')
         print(f'Deleted {args.file}')
@@ -380,12 +414,68 @@ def _pull_one(dev, filename, expected_bytes):
     return True
 
 
+def _pull_one_sd(dev, filename, expected_bytes):
+    """Pull a single file from SD card and save locally. Returns True on success."""
+    print(f'Downloading {filename} ({expected_bytes} bytes) ...')
+
+    def progress(received):
+        pct = received * 100 // expected_bytes
+        print(f'\r  {received}/{expected_bytes} bytes ({pct}%)',
+              end='', flush=True)
+
+    try:
+        data = dev.read_binary(f'cat --sd {filename}',
+                               expected_bytes, progress_cb=progress)
+    except RuntimeError as e:
+        print(f'\nERROR: transfer failed: {e}')
+        return False
+
+    print()
+
+    if len(data) != expected_bytes:
+        print(f'ERROR: received {len(data)} bytes but expected {expected_bytes}')
+        return False
+
+    with open(filename, 'wb') as f:
+        f.write(data)
+
+    print(f'Saved {filename} ({len(data)} bytes)')
+    return True
+
+
 def cmd_pull(device, args):
+    sd = _sd_prefix(args)
     with _transfer(device) as dev:
+        if sd:
+            files = {f: sz for f, sz in _parse_ls_any(dev.send('ls --sd'))}
+            if args.file:
+                if args.file not in files:
+                    sys.exit(f'ERROR: {args.file} not found on SD card')
+                if files[args.file] == 0:
+                    sys.exit(f'ERROR: {args.file} is empty')
+                if not _pull_one_sd(dev, args.file, files[args.file]):
+                    sys.exit(1)
+            else:
+                to_pull = sorted(
+                    (f, sz) for f, sz in files.items()
+                    if sz > 0 and not os.path.exists(f)
+                )
+                if not to_pull:
+                    sys.exit('No new files on SD card.')
+                print(f'{len(to_pull)} file(s) to pull '
+                      f'({sum(sz for _, sz in to_pull)} bytes total)')
+                failed = []
+                for f, sz in to_pull:
+                    if not _pull_one_sd(dev, f, sz):
+                        failed.append(f)
+                if failed:
+                    print(f'FAILED: {", ".join(failed)}', file=sys.stderr)
+                    sys.exit(1)
+            return
+
         flights = {f: sz for f, sz in _parse_ls(dev.send('ls'))}
 
         if args.file:
-            # Pull a specific file
             if args.file not in flights:
                 sys.exit(f'ERROR: {args.file} not found on device')
             if flights[args.file] == 0:
@@ -393,7 +483,6 @@ def cmd_pull(device, args):
             if not _pull_one(dev, args.file, flights[args.file]):
                 sys.exit(1)
         else:
-            # Pull all non-zero files that don't already have a local CSV
             to_pull = sorted(
                 (f, sz) for f, sz in flights.items()
                 if sz > 0 and not os.path.exists(f + '.csv')
@@ -416,35 +505,42 @@ def cmd_pull(device, args):
 
 
 def cmd_df(device, args):
+    sd = _sd_prefix(args)
     with _transfer(device) as dev:
         print(dev.send('status'))
         print('---')
-        print(dev.send('ls'))
+        print(dev.send(f'ls {sd}'.strip()))
+        if sd:
+            print('---')
+            print(dev.send('sdinfo'))
 
 
 def cmd_wipe(device, args):
+    sd = _sd_prefix(args)
+    target = 'SD card' if sd else 'device'
     with _transfer(device) as dev:
         if args.file:
-            confirm = input(f'Delete {args.file} from device? [y/N] ')
+            confirm = input(f'Delete {args.file} from {target}? [y/N] ')
             if confirm.lower() != 'y':
                 sys.exit('Aborted.')
-            result = dev.send(f'rm {args.file}')
+            result = dev.send(f'rm {sd}{args.file}'.strip())
             if 'error' in result.lower() or 'denied' in result.lower():
                 sys.exit(f'FAILED: {result}')
             print(f'Deleted {args.file}')
         else:
-            flights = _parse_ls(dev.send('ls'))
-            files   = [f for f, _ in flights]
+            parse = _parse_ls_any if sd else _parse_ls
+            entries = parse(dev.send(f'ls {sd}'.strip()))
+            files   = [f for f, _ in entries]
             if not files:
                 print('No files to delete.')
                 return
             print('\n'.join(files))
-            confirm = input('Delete ALL listed files? [y/N] ')
+            confirm = input(f'Delete ALL listed files from {target}? [y/N] ')
             if confirm.lower() != 'y':
                 sys.exit('Aborted.')
             ok = True
             for f in files:
-                result = dev.send(f'rm {f}')
+                result = dev.send(f'rm {sd}{f}'.strip())
                 if 'error' in result.lower() or 'denied' in result.lower():
                     print(f'FAILED {f}: {result}', file=sys.stderr)
                     ok = False
@@ -488,6 +584,54 @@ def cmd_monitor(port, args):
         os.close(fd)
 
 
+def cmd_sdtest(device, args):
+    nbytes = args.bytes
+    with _transfer(device) as dev:
+        # Write test pattern
+        print(f'Writing {nbytes}-byte test pattern to SD card ...')
+        result = dev.send(f'sdtest {nbytes}', timeout=30.0)
+        print(result)
+        if 'error' not in result.lower() and 'not mounted' not in result.lower():
+            # List to confirm file exists (FAT uppercases filenames)
+            ls_out = dev.send('ls --sd')
+            files = {f.lower(): (f, sz) for f, sz in _parse_ls_any(ls_out)}
+            if 'test_sd' not in files:
+                sys.exit('ERROR: test_sd not found after write')
+            actual_name, file_sz = files['test_sd']
+            print(f'{actual_name} present on SD card ({file_sz} bytes)')
+
+            if file_sz != nbytes:
+                sys.exit(f'ERROR: expected {nbytes} bytes, got {file_sz}')
+
+            data = dev.read_binary(f'cat --sd {actual_name}', file_sz)
+            # Verify cycling 0x00-0xFF pattern
+            expected = bytes(i & 0xFF for i in range(nbytes))
+            if data != expected:
+                for i in range(min(len(data), len(expected))):
+                    if data[i] != expected[i]:
+                        sys.exit(f'ERROR: data mismatch at offset {i}: '
+                                 f'got 0x{data[i]:02x}, expected 0x{expected[i]:02x}')
+                sys.exit(f'ERROR: length mismatch: got {len(data)}, '
+                         f'expected {len(expected)}')
+            print(f'Verified {nbytes} bytes OK')
+
+            # Clean up
+            dev.send(f'rm --sd {actual_name}')
+            print(f'Deleted {actual_name}')
+
+            # Confirm deletion
+            ls_out = dev.send('ls --sd')
+            remaining = {f.lower() for f, _ in _parse_ls_any(ls_out)}
+            if 'test_sd' in remaining:
+                sys.exit('ERROR: test_sd still present after delete')
+            print('SD card test PASSED')
+
+
+def cmd_sdinfo(device, args):
+    with _transfer(device) as dev:
+        print(dev.send('sdinfo'))
+
+
 def cmd_diag(device, args):
     print('=== Force-4 Diagnostics ===')
     print(f'Port: {device.port}')
@@ -528,6 +672,9 @@ _COMMANDS = {
     'df':      cmd_df,
     'wipe':    cmd_wipe,
     'diag':    cmd_diag,
+    # sd card
+    'sdtest':  cmd_sdtest,
+    'sdinfo':  cmd_sdinfo,
 }
 
 
@@ -557,17 +704,29 @@ def main():
     sub.add_parser('monitor', help='Stream raw serial output (read-only, Ctrl-C to stop)')
 
     # Data commands
-    sub.add_parser('ls',  help='List flight files on device')
+    p = sub.add_parser('ls',  help='List flight files on device')
+    _add_storage_flag(p)
     p = sub.add_parser('cat',  help='Print flight file contents to stdout')
     p.add_argument('file')
+    _add_storage_flag(p)
     p = sub.add_parser('rm',   help='Delete a specific flight file from device')
     p.add_argument('file')
+    _add_storage_flag(p)
     p = sub.add_parser('pull', help='Download flight CSV (default: all new non-empty files)')
     p.add_argument('file', nargs='?', help='Flight filename (default: all non-empty without local CSV)')
-    sub.add_parser('df',   help='Show storage usage and flight list')
+    _add_storage_flag(p)
+    p = sub.add_parser('df',   help='Show storage usage and flight list')
+    _add_storage_flag(p)
     p = sub.add_parser('wipe', help='Delete flight file(s) from device (default: all)')
     p.add_argument('file', nargs='?', help='Flight filename (default: all, with confirmation)')
+    _add_storage_flag(p)
     sub.add_parser('diag', help='Run device health diagnostics')
+
+    # SD card commands
+    p = sub.add_parser('sdtest', help='Write/verify test pattern on SD card')
+    p.add_argument('--bytes', type=int, default=4096,
+                   help='Number of bytes to write (default: 4096)')
+    sub.add_parser('sdinfo', help='Show SD card mount status and free space')
 
     args = parser.parse_args()
     port = args.port or _find_port()

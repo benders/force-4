@@ -42,10 +42,7 @@ static const char *TAG = "adxl375";
 #define SPI_MB              0x40
 
 static spi_device_handle_t s_spi = NULL;
-static gpio_num_t s_mosi = GPIO_NUM_NC;
-static gpio_num_t s_miso = GPIO_NUM_NC;
-static gpio_num_t s_sclk = GPIO_NUM_NC;
-static gpio_num_t s_cs   = GPIO_NUM_NC;
+static gpio_num_t s_cs = GPIO_NUM_NC;
 
 static esp_err_t write_reg(uint8_t reg, uint8_t val)
 {
@@ -108,25 +105,9 @@ static bool configure_sensor(void)
     return true;
 }
 
-bool adxl375_init(gpio_num_t mosi, gpio_num_t miso, gpio_num_t sclk, gpio_num_t cs)
+bool adxl375_init_on_bus(gpio_num_t cs)
 {
-    s_mosi = mosi;
-    s_miso = miso;
-    s_sclk = sclk;
-    s_cs   = cs;
-
-    spi_bus_config_t bus_cfg = {
-        .mosi_io_num = mosi,
-        .miso_io_num = miso,
-        .sclk_io_num = sclk,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-    };
-    esp_err_t err = spi_bus_initialize(SPI2_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(err));
-        return false;
-    }
+    s_cs = cs;
 
     spi_device_interface_config_t dev_cfg = {
         .mode = 3,               // CPOL=1, CPHA=1
@@ -134,10 +115,9 @@ bool adxl375_init(gpio_num_t mosi, gpio_num_t miso, gpio_num_t sclk, gpio_num_t 
         .spics_io_num = cs,
         .queue_size = 1,
     };
-    err = spi_bus_add_device(SPI2_HOST, &dev_cfg, &s_spi);
+    esp_err_t err = spi_bus_add_device(SPI2_HOST, &dev_cfg, &s_spi);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "SPI device add failed: %s", esp_err_to_name(err));
-        spi_bus_free(SPI2_HOST);
         return false;
     }
 
@@ -146,15 +126,14 @@ bool adxl375_init(gpio_num_t mosi, gpio_num_t miso, gpio_num_t sclk, gpio_num_t 
 
 bool adxl375_reinit(void)
 {
-    if (s_mosi == GPIO_NUM_NC) return false;  // adxl375_init never called
+    if (s_cs == GPIO_NUM_NC) return false;  // never initialized
 
     if (s_spi != NULL) {
         spi_bus_remove_device(s_spi);
         s_spi = NULL;
     }
-    spi_bus_free(SPI2_HOST);
 
-    return adxl375_init(s_mosi, s_miso, s_sclk, s_cs);
+    return adxl375_init_on_bus(s_cs);
 }
 
 int adxl375_read_fifo_count(void)

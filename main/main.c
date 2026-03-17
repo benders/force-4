@@ -20,6 +20,9 @@
 #ifdef CONFIG_FORCE4_SD_CARD
 #include "sdcard.h"
 #endif
+#ifdef CONFIG_FORCE4_CAMERA
+#include "camera.h"
+#endif
 
 static const char *TAG = "main";
 
@@ -107,6 +110,12 @@ void app_main(void)
 #ifdef CONFIG_FORCE4_SD_CARD
     if (!sdcard_init()) {
         ESP_LOGW(TAG, "SD card not available");
+    }
+#endif
+
+#ifdef CONFIG_FORCE4_CAMERA
+    if (!camera_init()) {
+        ESP_LOGW(TAG, "Camera init failed");
     }
 #endif
 

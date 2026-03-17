@@ -14,6 +14,9 @@
 #ifdef CONFIG_FORCE4_SD_CARD
 #include "sdcard.h"
 #endif
+#ifdef CONFIG_FORCE4_CAMERA
+#include "camera.h"
+#endif
 
 static const char *TAG = "serial_cmd";
 
@@ -123,6 +126,10 @@ static void cmd_help(void)
     printf("  rm --sd <file>  Delete SD card file\n");
     printf("  sdtest [N]      Write N-byte test pattern to SD (default 1024)\n");
     printf("  sdinfo          Show SD card status and free space\n");
+#endif
+#ifdef CONFIG_FORCE4_CAMERA
+    printf("Camera commands:\n");
+    printf("  photo           Capture JPEG and save to /sd/PHOTO.JPG\n");
 #endif
 }
 
@@ -245,6 +252,21 @@ static void process_line(char *line)
         }
     } else if (strcmp(line, "sdinfo") == 0) {
         sdcard_print_info();
+#endif
+#ifdef CONFIG_FORCE4_CAMERA
+    } else if (strcmp(line, "photo") == 0) {
+        if (!sdcard_is_mounted()) {
+            printf("error: SD card not mounted\n");
+        } else if (!camera_capture_to_sd("/sd/PHOTO.JPG")) {
+            printf("error: capture failed\n");
+        } else {
+            struct stat st;
+            if (stat("/sd/PHOTO.JPG", &st) == 0) {
+                printf("ok size:%ld\n", (long)st.st_size);
+            } else {
+                printf("error: stat failed\n");
+            }
+        }
 #endif
     } else if (strcmp(line, "help") == 0) {
         cmd_help();

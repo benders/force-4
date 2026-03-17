@@ -21,6 +21,8 @@ The XIAO ESP32-S3 uses the **USB Serial/JTAG controller**, not USB-OTG. See `ref
 
 SCLK=GPIO7 (D8), MOSI=GPIO9 (D10), MISO=GPIO8 (D9), CS=GPIO2 (D1), INT1=GPIO4 (D3), Boot=GPIO9 (D10, read before SPI init), LED=GPIO1 (D0, active-high, external), SD_CS=GPIO21 (Sense board)
 
+Camera (Sense board, OV2640/OV3660): XCLK=GPIO10, SIOD=GPIO40, SIOC=GPIO39, PCLK=GPIO13, VSYNC=GPIO38, HREF=GPIO47, D0–D7=GPIO15/17/18/16/14/12/11/48. LED uses LEDC_TIMER_0/CHANNEL_0; camera XCLK uses LEDC_TIMER_1/CHANNEL_1.
+
 ## Serial protocol
 
 - Every command response is wrapped in `---BEGIN---\n` / `---END---\n`

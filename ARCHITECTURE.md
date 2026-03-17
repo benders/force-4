@@ -22,6 +22,7 @@ storage.c/.h      SPIFFS mount, flight file lifecycle, binary record writing
 serial_cmd.c/.h   Command dispatch, response framing
 led.c/.h          LEDC PWM patterns (breathe, flash, transfer, blink)
 sdcard.c/.h       SD card support (ifdef CONFIG_FORCE4_SD_CARD; see below)
+camera.c/.h       OV2640/OV3660 camera support (ifdef CONFIG_FORCE4_CAMERA; see below)
 ```
 
 ## State machine
@@ -47,7 +48,7 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 
 - Boot marker: `FORCE4:READY\n` (printed at startup for diagnostics; mission-control does not wait for it)
 - Response framing: `---BEGIN---\n` ... `---END---\n` around every command response
-- Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `trigger`, `transfer`, `resume`, `ping`, `help` (plus `ls --sd`, `cat --sd <file>`, `rm --sd <file>`, `sdtest [N]`, `sdinfo` when SD enabled)
+- Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `trigger`, `transfer`, `resume`, `ping`, `help` (plus `ls --sd`, `cat --sd <file>`, `rm --sd <file>`, `sdtest [N]`, `sdinfo` when SD enabled; `photo` when camera enabled)
 - `cat` returns a `size:<N>\n` header line followed by raw binary (512-byte chunks via `fwrite`). LF→CRLF conversion is disabled before binary output and restored after — without this, VFS inserts `\r` before every `\n` (0x0A) byte in the binary data. `mission-control pull` uses `Device.read_binary()` to read exactly N bytes with progress output, then converts binary → CSV locally
 
 ## Partition layout
@@ -176,3 +177,35 @@ Observed layout on the test 32 GB card:
 | `sdinfo`          | Print mount status, card capacity, and FATFS cluster info |
 
 `mission-control` supports `--sd` on `ls`, `cat`, `rm`, `pull`, `df`, `wipe`, plus `sdtest` and `sdinfo` subcommands.
+
+## Camera (optional)
+
+Enabled by `CONFIG_FORCE4_CAMERA` in `main/Kconfig.projbuild` (depends on `CONFIG_FORCE4_SD_CARD`; default off). All camera code is behind `#ifdef`. Added via `espressif/esp32-camera` IDF component (`main/idf_component.yml`).
+
+### Hardware
+
+OV2640/OV3660 camera on XIAO ESP32-S3 Sense board, connected via parallel DVP interface (I2C/SCCB for configuration, 8-bit parallel data bus for pixel data). Does not share the SPI2_HOST bus.
+
+| Signal   | GPIO | Signal  | GPIO |
+|----------|------|---------|------|
+| XCLK     | 10   | VSYNC   | 38   |
+| SIOD     | 40   | HREF    | 47   |
+| SIOC     | 39   | PCLK    | 13   |
+| D7 (Y9)  | 48   | D3 (Y5) | 16   |
+| D6 (Y8)  | 11   | D2 (Y4) | 18   |
+| D5 (Y7)  | 12   | D1 (Y3) | 17   |
+| D4 (Y6)  | 14   | D0 (Y2) | 15   |
+
+**LEDC conflict:** `led.c` uses `LEDC_TIMER_0`/`LEDC_CHANNEL_0` for PWM. Camera XCLK uses `LEDC_TIMER_1`/`LEDC_CHANNEL_1`.
+
+### Configuration
+
+QVGA (320×240), JPEG format, quality 12, frame buffer in PSRAM (`CAMERA_FB_IN_PSRAM`).
+
+### Command
+
+| Command | Description                                          |
+|---------|------------------------------------------------------|
+| `photo` | Capture JPEG frame, save to `/sd/PHOTO.JPG` on SD   |
+
+`mission-control photo` captures and downloads `PHOTO.JPG` in one step, verifying the JPEG magic bytes (`FFD8FF`).

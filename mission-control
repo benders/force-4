@@ -632,6 +632,40 @@ def cmd_sdinfo(device, args):
         print(dev.send('sdinfo'))
 
 
+def cmd_photo(device, args):
+    """Capture a JPEG photo and download it from the SD card."""
+    out = args.output
+    print('Taking photo ...')
+    resp = device.send('photo', timeout=15.0)
+    # Find 'ok size:N' line (response may include ESP_LOG lines)
+    size = None
+    error = None
+    for line in (resp or '').splitlines():
+        line = line.strip()
+        if line.startswith('ok size:'):
+            try:
+                size = int(line.split('size:')[1].strip())
+            except ValueError:
+                pass
+            break
+        if line.startswith('error:'):
+            error = line
+    if error:
+        sys.exit(f'ERROR: {error}')
+    if size is None:
+        sys.exit(f'ERROR: unexpected response: {resp!r}')
+
+    print(f'Downloading PHOTO.JPG ({size} bytes) ...')
+    data = device.read_binary('cat --sd PHOTO.JPG', size)
+
+    with open(out, 'wb') as f:
+        f.write(data)
+
+    if data[:3] != b'\xff\xd8\xff':
+        sys.exit(f'ERROR: {out} does not look like a JPEG (got {data[:4].hex()})')
+    print(f'Saved {out} ({len(data)} bytes) — valid JPEG')
+
+
 def cmd_diag(device, args):
     print('=== Force-4 Diagnostics ===')
     print(f'Port: {device.port}')
@@ -675,6 +709,8 @@ _COMMANDS = {
     # sd card
     'sdtest':  cmd_sdtest,
     'sdinfo':  cmd_sdinfo,
+    # camera
+    'photo':   cmd_photo,
 }
 
 
@@ -727,6 +763,11 @@ def main():
     p.add_argument('--bytes', type=int, default=4096,
                    help='Number of bytes to write (default: 4096)')
     sub.add_parser('sdinfo', help='Show SD card mount status and free space')
+
+    # Camera commands
+    p = sub.add_parser('photo', help='Capture JPEG photo and download from SD card')
+    p.add_argument('--output', '-o', default='PHOTO.JPG',
+                   help='Output filename (default: PHOTO.JPG)')
 
     args = parser.parse_args()
     port = args.port or _find_port()

@@ -1,7 +1,7 @@
 #pragma once
 #include <stdbool.h>
 
-// Initialize the OV2640 camera. Returns true on success.
+// Initialize the OV3660 camera. Returns true on success.
 bool camera_init(void);
 
 // Capture a JPEG frame and save it to path on the SD card.

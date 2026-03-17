@@ -77,12 +77,26 @@ bool camera_init(void)
         s->set_hmirror(s, 1);
     }
 
+    // Discard initial frames so AEC/AWB can settle
+    for (int i = 0; i < 5; i++) {
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (fb) {
+            esp_camera_fb_return(fb);
+        }
+    }
+
     ESP_LOGI(TAG, "Camera initialized (OV3660, QXGA 2048x1536 JPEG)");
     return true;
 }
 
 bool camera_capture_to_sd(const char *path)
 {
+    // Discard stale buffered frame
+    camera_fb_t *stale = esp_camera_fb_get();
+    if (stale) {
+        esp_camera_fb_return(stale);
+    }
+
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) {
         ESP_LOGE(TAG, "esp_camera_fb_get failed");

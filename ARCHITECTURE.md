@@ -210,7 +210,9 @@ OV2640/OV3660 camera on XIAO ESP32-S3 Sense board, connected via parallel DVP in
 
 ### Configuration
 
-QVGA (320×240), JPEG format, quality 12, frame buffer in PSRAM (`CAMERA_FB_IN_PSRAM`).
+QXGA (2048×1536), JPEG format, quality 12, single frame buffer in PSRAM (`CAMERA_FB_IN_PSRAM`, `CAMERA_GRAB_WHEN_EMPTY`).
+
+**Frame discard:** `camera_init()` discards 5 frames after sensor configuration so AEC/AWB can converge (adds ~1 s to boot). `camera_capture_to_sd()` discards one stale buffered frame before each capture so the saved image reflects the current scene, not whatever was buffered previously.
 
 ### Command
 

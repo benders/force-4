@@ -28,6 +28,8 @@ Camera (Sense board, OV2640/OV3660): XCLK=GPIO10, SIOD=GPIO40, SIOC=GPIO39, PCLK
 - Every command response is wrapped in `---BEGIN---\n` / `---END---\n`
 - `serial_cmd_task` prints `FORCE4:READY\n` at boot
 - **Binary output must disable VFS newline conversion** (`usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_LF)`) before `fwrite` and restore CRLF after — otherwise the VFS inserts `\r` before every `0x0A` byte in binary data
+- **Binary transfers use a two-step receiver-initiated protocol**: `cat <file>` returns `ready size:N` (no binary); the host then sends `go` to trigger the raw byte stream. `abort` cancels a pending transfer. `go` is the only command with no `---BEGIN---`/`---END---` framing.
+- **`tcflush(TCIFLUSH)` does NOT clear the USB hardware FIFO** — it only clears the kernel RX buffer. Bytes already latched in the USB FIFO arrive at the host milliseconds later, after the flush returns. Any protocol that streams binary immediately after a text response is inherently racy; the two-step protocol avoids this by never starting a binary stream until the host explicitly requests it.
 - See `ARCHITECTURE.md` for full command list and framing details
 
 ## CSV format (must match force-3)

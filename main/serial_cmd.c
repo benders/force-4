@@ -22,6 +22,10 @@ static const char *TAG = "serial_cmd";
 
 static bool flight_mode = true;
 
+/* Pending binary transfer state (set by 'cat', consumed by 'go'). */
+static char s_pending_path[64] = {0};
+static long s_pending_size     = -1;  /* -1 = no pending transfer */
+
 static const char *state_name(flight_state_t s)
 {
     switch (s) {
@@ -38,33 +42,51 @@ static void cmd_ls(void)
     storage_list_flights();
 }
 
+/* Prepare a binary transfer: stat the file, store path+size, reply "ready size:N".
+ * The actual bytes are sent only when the host sends 'go'. */
+static void cmd_cat_prepare(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        const char *name = strrchr(path, '/');
+        printf("error: cannot stat %s\n", name ? name + 1 : path);
+        return;
+    }
+    strncpy(s_pending_path, path, sizeof(s_pending_path) - 1);
+    s_pending_path[sizeof(s_pending_path) - 1] = '\0';
+    s_pending_size = (long)st.st_size;
+    printf("ready size:%ld\n", s_pending_size);
+}
+
 static void cmd_cat(const char *filename)
 {
     if (!filename || *filename == '\0') {
         printf("Usage: cat <filename>\n");
         return;
     }
-
     char path[48];
     snprintf(path, sizeof(path), "/spiffs/%s", filename);
+    cmd_cat_prepare(path);
+}
 
-    struct stat st;
-    if (stat(path, &st) != 0) {
-        printf("Error: cannot stat %s\n", filename);
+/* Send the pending binary transfer.  Called BEFORE ---BEGIN--- (no framing). */
+static void cmd_go(void)
+{
+    if (s_pending_size < 0) {
+        ESP_LOGE(TAG, "go: no pending transfer");
         return;
     }
-    printf("size:%ld\n", (long)st.st_size);
-    fflush(stdout);
-
-    FILE *f = fopen(path, "rb");
+    FILE *f = fopen(s_pending_path, "rb");
     if (!f) {
-        printf("Error: cannot open %s\n", filename);
+        ESP_LOGE(TAG, "go: cannot open %s", s_pending_path);
+        s_pending_size = -1;
+        s_pending_path[0] = '\0';
         return;
     }
+    s_pending_size = -1;
+    s_pending_path[0] = '\0';
 
-    /* Disable LF→CRLF conversion for raw binary output */
     usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_LF);
-
     uint8_t buf[512];
     size_t n;
     int chunk = 0;
@@ -76,9 +98,14 @@ static void cmd_cat(const char *filename)
         }
     }
     fclose(f);
-
-    /* Restore default CRLF conversion for normal text output */
     usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
+}
+
+static void cmd_abort(void)
+{
+    s_pending_size = -1;
+    s_pending_path[0] = '\0';
+    printf("ok\n");
 }
 
 static void cmd_rm(const char *filename)
@@ -111,18 +138,20 @@ static void cmd_help(void)
 {
     printf("Commands:\n");
     printf("  ls              List flight files\n");
-    printf("  cat <filename>  Print file contents\n");
+    printf("  cat <filename>  Prepare file for transfer (follow with 'go')\n");
     printf("  rm <filename>   Delete file (requires transfer state)\n");
     printf("  status          Show system status\n");
     printf("  trigger         Manually start a flight recording (IDLE only)\n");
     printf("  transfer        Pause logging; show transfer LED pattern\n");
     printf("  resume          Exit transfer mode; return to IDLE\n");
     printf("  ping            Connection test\n");
+    printf("  go              Send pending binary transfer (after cat)\n");
+    printf("  abort           Cancel pending binary transfer\n");
     printf("  help            Show this help\n");
 #ifdef CONFIG_FORCE4_SD_CARD
     printf("SD card commands:\n");
     printf("  ls --sd         List SD card files\n");
-    printf("  cat --sd <file> Print SD card file contents\n");
+    printf("  cat --sd <file> Prepare SD file for transfer (follow with 'go')\n");
     printf("  rm --sd <file>  Delete SD card file\n");
     printf("  sdtest [N]      Write N-byte test pattern to SD (default 1024)\n");
     printf("  sdinfo          Show SD card status and free space\n");
@@ -161,6 +190,13 @@ static void process_line(char *line)
     }
 #endif
 
+    /* 'go' sends raw binary with no ---BEGIN---/---END--- framing.
+     * It must be handled before the framing printf and return early. */
+    if (strcmp(line, "go") == 0) {
+        cmd_go();
+        return;
+    }
+
     printf("---BEGIN---\n");
 
     if (strcmp(line, "ls") == 0) {
@@ -175,41 +211,17 @@ static void process_line(char *line)
             if (!arg || *arg == '\0') {
                 printf("Usage: cat --sd <filename>\n");
             } else if (!sdcard_is_mounted()) {
-                printf("SD card not mounted\n");
+                printf("error: SD card not mounted\n");
             } else {
                 char path[64];
                 snprintf(path, sizeof(path), "/sd/%s", arg);
-
-                struct stat st;
-                if (stat(path, &st) != 0) {
-                    printf("Error: cannot stat %s\n", arg);
-                } else {
-                    printf("size:%ld\n", (long)st.st_size);
-                    fflush(stdout);
-
-                    FILE *f = fopen(path, "rb");
-                    if (!f) {
-                        printf("Error: cannot open %s\n", arg);
-                    } else {
-                        usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_LF);
-                        uint8_t buf[512];
-                        size_t n;
-                        int chunk = 0;
-                        while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
-                            fwrite(buf, 1, n, stdout);
-                            fflush(stdout);
-                            if (++chunk % 8 == 0) {
-                                vTaskDelay(1);
-                            }
-                        }
-                        fclose(f);
-                        usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
-                    }
-                }
+                cmd_cat_prepare(path);
             }
         } else
 #endif
         { cmd_cat(arg); }
+    } else if (strcmp(line, "abort") == 0) {
+        cmd_abort();
     } else if (strcmp(line, "rm") == 0) {
 #ifdef CONFIG_FORCE4_SD_CARD
         if (use_sd) {

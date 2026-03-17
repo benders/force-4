@@ -48,8 +48,15 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 
 - Boot marker: `FORCE4:READY\n` (printed at startup for diagnostics; mission-control does not wait for it)
 - Response framing: `---BEGIN---\n` ... `---END---\n` around every command response
-- Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `trigger`, `transfer`, `resume`, `ping`, `help` (plus `ls --sd`, `cat --sd <file>`, `rm --sd <file>`, `sdtest [N]`, `sdinfo` when SD enabled; `photo` when camera enabled)
-- `cat` returns a `size:<N>\n` header line followed by raw binary (512-byte chunks via `fwrite`). LF→CRLF conversion is disabled before binary output and restored after — without this, VFS inserts `\r` before every `\n` (0x0A) byte in the binary data. `mission-control pull` uses `Device.read_binary()` to read exactly N bytes with progress output, then converts binary → CSV locally
+- Commands: `ls`, `cat <file>`, `rm <file>`, `status`, `trigger`, `transfer`, `resume`, `ping`, `go`, `abort`, `help` (plus `ls --sd`, `cat --sd <file>`, `rm --sd <file>`, `sdtest [N]`, `sdinfo` when SD enabled; `photo` when camera enabled)
+- **Two-step binary transfer protocol** (receiver-initiated, inspired by XModem):
+  1. `cat <file>` (or `cat --sd <file>`) prepares the transfer and responds with `ready size:N\n` inside the normal `---BEGIN---`/`---END---` framing. No binary is sent yet.
+  2. `go` — sent by the host when ready — streams exactly N raw bytes with **no framing whatsoever**. LF→CRLF conversion is disabled before and restored after. `go` returns immediately (no `---BEGIN---`/`---END---`).
+  3. `abort` cancels any pending transfer and returns `ok\n` inside normal framing.
+  - This eliminates the race where stale JPEG/binary bytes remain in the USB hardware FIFO from a previous session and corrupt the next command's response. The device never streams binary until the host explicitly requests it.
+  - `mission-control` uses `Device.read_binary(cmd)` → calls `send(cmd)` to get the `ready size:N` response, then `_recv_raw(N)` which flushes the kernel RX buffer, writes `go\r\n`, and reads exactly N bytes. `exit_transfer()` sends a best-effort `abort` before `resume` to clear any leftover pending state.
+  - **USB packet fragmentation**: even when the device writes 512-byte chunks via `fwrite`, the host receives them as many small `os.read` returns (2–64 bytes each). This is normal USB Serial/JTAG behavior — the USB FIFO is 64 bytes per packet at Full Speed. The receiver loop must accumulate reads until `len(data) == nbytes`.
+  - **First transfer after firmware flash** may stall briefly (>5 s idle gap) while the device finishes initializing post-boot. Allow ~12 s after power-on before issuing binary transfers; subsequent transfers on a warm device are reliable.
 
 ## Partition layout
 
@@ -171,7 +178,7 @@ Observed layout on the test 32 GB card:
 | Command           | Description                                               |
 |-------------------|-----------------------------------------------------------|
 | `ls --sd`         | List files on SD card                                     |
-| `cat --sd <file>` | Binary output of SD card file                             |
+| `cat --sd <file>` | Prepare SD file for transfer; returns `ready size:N`      |
 | `rm --sd <file>`  | Delete file from SD card                                  |
 | `sdtest [N]`      | Write N-byte cycling pattern to `test_sd` on SD           |
 | `sdinfo`          | Print mount status, card capacity, and FATFS cluster info |

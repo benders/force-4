@@ -58,7 +58,7 @@ bool camera_init(void)
         .ledc_channel = CAM_LEDC_CHANNEL,
 
         .pixel_format = PIXFORMAT_JPEG,
-        .frame_size   = FRAMESIZE_QVGA,   // 320x240 — small JPEG for quick transfer
+        .frame_size   = FRAMESIZE_QXGA,   // 2048x1536 — OV3660 full resolution
         .jpeg_quality = 12,               // 0–63, lower = better quality
         .fb_count     = 1,
         .fb_location  = CAMERA_FB_IN_PSRAM,
@@ -77,7 +77,7 @@ bool camera_init(void)
         s->set_hmirror(s, 1);
     }
 
-    ESP_LOGI(TAG, "Camera initialized (OV3660, QVGA JPEG)");
+    ESP_LOGI(TAG, "Camera initialized (OV3660, QXGA 2048x1536 JPEG)");
     return true;
 }
 

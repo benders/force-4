@@ -2,9 +2,8 @@
 
 ## Big items
 
-[ ] Make default `pull` behavior pull all files that are not present in the local directory
-[ ] Is the flight / dev mode toggle needed for anything?
-[ ] Can serial speed be increased during pull?
+[X] Make default `pull` behavior pull all files that are not present in the local directory
+[ ] Remove flight / dev mode concept
 [ ] Automatically delete oldest file when space is low (<1MB?)
 [X] Serial command to manually trigger data recording
 [ ] Sample averaging for smoother data

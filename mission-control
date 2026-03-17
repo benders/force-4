@@ -76,6 +76,31 @@ class Device:
         termios.tcsetattr(self._fd, termios.TCSANOW, attrs)
         time.sleep(0.2)
         termios.tcflush(self._fd, termios.TCIOFLUSH)
+        # Synchronize: send a ping and consume all incoming bytes until 'pong'
+        # appears in a ---BEGIN---/---END--- block.  Any bytes left in the
+        # device's TX FIFO from a previous session's incomplete download (stale
+        # cat --sd response) are drained along the way before we proceed.
+        os.write(self._fd, b'ping\r\n')
+        _buf  = b''
+        _last = time.monotonic()
+        while time.monotonic() - _last < 30.0:
+            try:
+                chunk = os.read(self._fd, 4096)
+                if chunk:
+                    _buf  += chunk
+                    _last  = time.monotonic()
+                    while b'---END---' in _buf:
+                        _ei    = _buf.index(b'---END---')
+                        _bi    = _buf.rfind(b'---BEGIN---', 0, _ei)
+                        _block = _buf[_bi + 11:_ei] if _bi >= 0 else b''
+                        _buf   = _buf[_ei + 9:]
+                        if b'pong' in _block:
+                            termios.tcflush(self._fd, termios.TCIOFLUSH)
+                            return self
+            except BlockingIOError:
+                time.sleep(0.01)
+        # Timed out — device may still be booting; flush and proceed anyway.
+        termios.tcflush(self._fd, termios.TCIOFLUSH)
         return self
 
     def __exit__(self, *_):
@@ -111,92 +136,52 @@ class Device:
             return text[begin + len(_BEGIN):end if end >= 0 else len(text)].strip()
         return text.strip() or None
 
-    def read_binary(self, cmd, nbytes, progress_cb=None, timeout=300.0):
-        """Send a command and read exactly nbytes of raw binary after the size header.
-
-        Expects: ---BEGIN---\\n size:N\\n <N raw bytes> ---END---\\n
-        Returns the raw bytes. Raises RuntimeError on timeout or short read.
+    def read_binary(self, cmd, expected_bytes=None, progress_cb=None, timeout=300.0):
+        """Two-step receiver-initiated transfer: send cat cmd to get 'ready size:N',
+        then send 'go' to receive exactly N bytes of raw binary (no framing).
+        Returns the raw bytes. Raises RuntimeError on any failure.
         """
-        termios.tcflush(self._fd, termios.TCIFLUSH)
-        os.write(self._fd, (cmd + '\r\n').encode())
+        resp = self.send(cmd, timeout=5.0)
+        size = None
+        for line in (resp or '').splitlines():
+            line = line.strip()
+            if line.startswith('ready size:'):
+                size = int(line.split('size:')[1].strip())
+                break
+            if line.startswith('error:'):
+                raise RuntimeError(f'cat failed: {line}')
+        if size is None:
+            raise RuntimeError(f'unexpected cat response: {resp!r}')
+        if expected_bytes is not None and size != expected_bytes:
+            raise RuntimeError(f'size mismatch: device={size}, expected={expected_bytes}')
+        return self._recv_raw(size, progress_cb=progress_cb, timeout=timeout)
 
-        buf      = b''
+    def _recv_raw(self, nbytes, progress_cb=None, timeout=300.0):
+        """Send 'go' and read exactly nbytes of raw binary (no framing)."""
+        termios.tcflush(self._fd, termios.TCIFLUSH)
+        os.write(self._fd, b'go\r\n')
+        data     = b''
         deadline = time.monotonic() + timeout
         last_rx  = time.monotonic()
-
-        # Phase 1: read lines until we've seen ---BEGIN--- and size: header
-        begun = False
-        while time.monotonic() < deadline:
-            try:
-                chunk = os.read(self._fd, 4096)
-                if chunk:
-                    buf     += chunk
-                    last_rx  = time.monotonic()
-                    deadline = max(deadline, last_rx + 2.0)
-                    while b'\n' in buf:
-                        line, buf = buf.split(b'\n', 1)
-                        text = line.decode(errors='replace').strip()
-                        if not begun:
-                            if text == _BEGIN:
-                                begun = True
-                            continue
-                        if text.startswith('size:'):
-                            # Remaining buf is start of binary data
-                            break
-                    else:
-                        continue
-                    break  # got size header, buf has binary data start
-                else:
-                    time.sleep(0.01)
-            except BlockingIOError:
-                time.sleep(0.01)
-        else:
-            raise RuntimeError('timeout waiting for size header')
-
-        # Phase 2: read exactly nbytes of raw binary
-        data = buf[:nbytes]
-        buf  = buf[nbytes:]  # may contain ---END---
-        chunks_read = 1 if data else 0
-        if progress_cb and chunks_read and chunks_read % 10 == 0:
-            progress_cb(len(data))
         while len(data) < nbytes:
             if time.monotonic() >= deadline:
                 raise RuntimeError(
-                    f'timeout during binary read ({len(data)}/{nbytes} bytes)')
+                    f'timeout during recv ({len(data)}/{nbytes} bytes)')
             try:
                 chunk = os.read(self._fd, min(4096, nbytes - len(data)))
                 if chunk:
                     data    += chunk
                     last_rx  = time.monotonic()
-                    deadline = max(deadline, last_rx + 2.0)
-                    chunks_read += 1
-                    if progress_cb and chunks_read % 10 == 0:
+                    deadline = max(deadline, last_rx + 5.0)
+                    if progress_cb:
                         progress_cb(len(data))
                 else:
                     time.sleep(0.01)
             except BlockingIOError:
-                if time.monotonic() - last_rx > 2.0:
+                if time.monotonic() - last_rx > 5.0:
                     raise RuntimeError(
-                        f'idle gap during binary read ({len(data)}/{nbytes} bytes)')
+                        f'idle gap during recv ({len(data)}/{nbytes} bytes)')
                 time.sleep(0.01)
-
-        if progress_cb and chunks_read % 10 != 0:
-            progress_cb(len(data))
-
-        # Phase 3: drain until ---END--- (best-effort, don't fail if missing)
-        end_deadline = time.monotonic() + 2.0
-        while time.monotonic() < end_deadline:
-            try:
-                chunk = os.read(self._fd, 4096)
-                if chunk:
-                    buf += chunk
-                    if b'---END---' in buf:
-                        break
-                else:
-                    time.sleep(0.01)
-            except BlockingIOError:
-                time.sleep(0.01)
-
         return data
 
     def send(self, cmd, timeout=4.0):
@@ -226,6 +211,14 @@ class Device:
         termios.tcflush(self._fd, termios.TCIFLUSH)
 
     def exit_transfer(self):
+        # Best-effort abort: cancels any pending binary transfer so the device
+        # does not stream stale bytes into the next command's response window.
+        try:
+            termios.tcflush(self._fd, termios.TCIFLUSH)
+            os.write(self._fd, b'abort\r\n')
+            self._read_until_end(timeout=1.0)
+        except Exception:
+            pass
         # Retry resume up to 3 times: after a large rm the USB TX buffer may
         # still be draining, delaying the response past the idle-gap timeout.
         for attempt in range(3):
@@ -635,6 +628,7 @@ def cmd_sdinfo(device, args):
 def cmd_photo(device, args):
     """Capture a JPEG photo and download it from the SD card."""
     out = args.output
+    device.require_idle()
     print('Taking photo ...')
     resp = device.send('photo', timeout=15.0)
     # Find 'ok size:N' line (response may include ESP_LOG lines)
@@ -656,7 +650,10 @@ def cmd_photo(device, args):
         sys.exit(f'ERROR: unexpected response: {resp!r}')
 
     print(f'Downloading PHOTO.JPG ({size} bytes) ...')
-    data = device.read_binary('cat --sd PHOTO.JPG', size)
+    with _transfer(device) as dev:
+        data = dev.read_binary('cat --sd PHOTO.JPG', size,
+                               progress_cb=lambda n: print(f'\r  {n}/{size} bytes', end='', flush=True))
+    print()
 
     with open(out, 'wb') as f:
         f.write(data)

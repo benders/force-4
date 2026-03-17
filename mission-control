@@ -160,6 +160,15 @@ class Device:
     def _recv_raw(self, nbytes, progress_cb=None, timeout=300.0):
         """Send 'go' and read exactly nbytes of raw binary (no framing)."""
         termios.tcflush(self._fd, termios.TCIFLUSH)
+        # tcflush only clears the kernel RX buffer, not the USB hardware FIFO.
+        # Stale bytes (e.g. trailing \r\n from ---END---) may still be in the
+        # USB FIFO and arrive milliseconds later.  Wait briefly, then drain.
+        time.sleep(0.05)
+        try:
+            while os.read(self._fd, 4096):
+                pass
+        except BlockingIOError:
+            pass
         os.write(self._fd, b'go\r\n')
         data     = b''
         deadline = time.monotonic() + timeout

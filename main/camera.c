@@ -10,7 +10,7 @@
 
 static const char *TAG = "camera";
 
-// OV2640 GPIO assignments on XIAO ESP32-S3 Sense board
+// OV3660 GPIO assignments on XIAO ESP32-S3 Sense board
 #define CAM_PIN_PWDN    -1
 #define CAM_PIN_RESET   -1
 #define CAM_PIN_XCLK    10
@@ -77,7 +77,7 @@ bool camera_init(void)
         s->set_hmirror(s, 1);
     }
 
-    ESP_LOGI(TAG, "Camera initialized (OV2640, QVGA JPEG)");
+    ESP_LOGI(TAG, "Camera initialized (OV3660, QVGA JPEG)");
     return true;
 }
 

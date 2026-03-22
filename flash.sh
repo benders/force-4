@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Flash and monitor the ESP32-S3.
+# Flash the ESP32-S3.
 # Docker USB passthrough on macOS is limited, so we use host-side tools.
 set -e
 
@@ -26,13 +26,10 @@ case "${1:-flash}" in
       0x8000 build/partition_table/partition-table.bin \
       0x10000 build/force-4.bin
     ;;
-  monitor)
-    ;;
   *)
-    echo "Usage: $0 [flash|monitor]"
+    echo "Usage: $0 [flash]"
     exit 1
     ;;
 esac
 
-echo "Starting monitor on $PORT ..."
-./mission-control --port "$PORT" monitor
+echo "Done. Run ./mission-control monitor to see output."

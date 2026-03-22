@@ -3,8 +3,9 @@
 ## Build
 
 ```bash
-./build.sh        # Docker-based (espressif/idf:v5.4), no local ESP-IDF
-./flash.sh        # requires host esptool.py
+./build.sh                    # Docker-based (espressif/idf:v5.4), no local ESP-IDF
+./flash.sh                    # requires host esptool.py
+./mission-control monitor     # serial output after flashing
 ```
 
 Delete `build/` and `sdkconfig` when changing `sdkconfig.defaults` — stale cache will ignore your changes.

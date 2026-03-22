@@ -34,8 +34,8 @@ Requires Docker. No local ESP-IDF install.
 Requires `esptool.py` on the host (`pip install esptool`).
 
 ```bash
-./flash.sh          # flash + monitor
-./flash.sh monitor  # monitor only
+./flash.sh                    # flash firmware
+./mission-control monitor     # monitor serial output
 ```
 
 ## Operation

@@ -33,7 +33,9 @@ static const char *TAG = "camera";
 #define CAM_LEDC_TIMER   LEDC_TIMER_1
 #define CAM_LEDC_CHANNEL LEDC_CHANNEL_1
 
-bool camera_init(void)
+// Build a camera_config_t with the shared GPIO/clock settings.
+static camera_config_t make_config(framesize_t frame_size, int fb_count,
+                                   camera_grab_mode_t grab_mode)
 {
     camera_config_t config = {
         .pin_pwdn     = CAM_PIN_PWDN,
@@ -58,12 +60,28 @@ bool camera_init(void)
         .ledc_channel = CAM_LEDC_CHANNEL,
 
         .pixel_format = PIXFORMAT_JPEG,
-        .frame_size   = FRAMESIZE_QXGA,   // 2048x1536 — OV3660 full resolution
-        .jpeg_quality = 12,               // 0–63, lower = better quality
-        .fb_count     = 1,
+        .frame_size   = frame_size,
+        .jpeg_quality = 12,
+        .fb_count     = fb_count,
         .fb_location  = CAMERA_FB_IN_PSRAM,
-        .grab_mode    = CAMERA_GRAB_WHEN_EMPTY,
+        .grab_mode    = grab_mode,
     };
+    return config;
+}
+
+static void apply_sensor_settings(void)
+{
+    sensor_t *s = esp_camera_sensor_get();
+    if (s) {
+        s->set_vflip(s, 1);
+        s->set_hmirror(s, 1);
+    }
+}
+
+bool camera_init(void)
+{
+    camera_config_t config = make_config(FRAMESIZE_QXGA, 1,
+                                         CAMERA_GRAB_WHEN_EMPTY);
 
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
@@ -71,11 +89,7 @@ bool camera_init(void)
         return false;
     }
 
-    sensor_t *s = esp_camera_sensor_get();
-    if (s) {
-        s->set_vflip(s, 1);
-        s->set_hmirror(s, 1);
-    }
+    apply_sensor_settings();
 
     // Discard initial frames so AEC/AWB can settle
     for (int i = 0; i < 5; i++) {
@@ -122,6 +136,41 @@ bool camera_capture_to_sd(const char *path)
     }
 
     ESP_LOGD(TAG, "Saved %s (%zu bytes)", path, written);
+    return true;
+}
+
+bool camera_configure_video(void)
+{
+#ifdef CONFIG_FORCE4_VIDEO_QXGA
+    framesize_t fs = FRAMESIZE_QXGA;
+    const char *label = "QXGA 2048x1536";
+#else
+    framesize_t fs = FRAMESIZE_SVGA;
+    const char *label = "SVGA 800x600";
+#endif
+
+    camera_config_t config = make_config(fs, 2, CAMERA_GRAB_LATEST);
+    esp_err_t err = esp_camera_reconfigure(&config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Reconfigure to video failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    apply_sensor_settings();
+    ESP_LOGI(TAG, "Camera reconfigured for video (%s)", label);
+    return true;
+}
+
+bool camera_configure_photo(void)
+{
+    camera_config_t config = make_config(FRAMESIZE_QXGA, 1,
+                                         CAMERA_GRAB_WHEN_EMPTY);
+    esp_err_t err = esp_camera_reconfigure(&config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Reconfigure to photo failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    apply_sensor_settings();
+    ESP_LOGI(TAG, "Camera reconfigured for photo (QXGA)");
     return true;
 }
 

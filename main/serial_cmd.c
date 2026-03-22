@@ -16,6 +16,8 @@
 #endif
 #ifdef CONFIG_FORCE4_CAMERA
 #include "camera.h"
+#include "video.h"
+#include "esp_camera.h"
 #endif
 
 static const char *TAG = "serial_cmd";
@@ -132,6 +134,9 @@ static void cmd_status(void)
     printf("free: %zu bytes\n", storage_free_space());
     printf("flights: %d\n", flight_logger_get_flight_count());
     printf("uptime: %lld s\n", (long long)(esp_timer_get_time() / 1000000LL));
+#ifdef CONFIG_FORCE4_CAMERA
+    printf("video: %s\n", video_is_recording() ? "recording" : "idle");
+#endif
 }
 
 static void cmd_help(void)
@@ -161,6 +166,7 @@ static void cmd_help(void)
 #ifdef CONFIG_FORCE4_CAMERA
     printf("Camera commands:\n");
     printf("  photo           Capture JPEG and save to /sd/PHOTO.JPG\n");
+    printf("  vidtest         Benchmark video capture for 5 seconds\n");
 #endif
 }
 
@@ -268,8 +274,43 @@ static void process_line(char *line)
         sdcard_print_info();
 #endif
 #ifdef CONFIG_FORCE4_CAMERA
-    } else if (strcmp(line, "photo") == 0) {
+    } else if (strcmp(line, "vidtest") == 0) {
         if (!sdcard_is_mounted()) {
+            printf("error: SD card not mounted\n");
+        } else if (video_is_recording()) {
+            printf("error: video recording in progress\n");
+        } else {
+            camera_configure_video();
+            // Discard first frame (may be stale)
+            camera_fb_t *stale = esp_camera_fb_get();
+            if (stale) esp_camera_fb_return(stale);
+            int64_t start = esp_timer_get_time();
+            int64_t end = start + 5000000LL; // 5 seconds
+            uint32_t frames = 0;
+            uint32_t total_bytes = 0;
+            uint32_t max_size = 0;
+            while (esp_timer_get_time() < end) {
+                camera_fb_t *fb = esp_camera_fb_get();
+                if (!fb) continue;
+                frames++;
+                total_bytes += fb->len;
+                if (fb->len > max_size) max_size = fb->len;
+                esp_camera_fb_return(fb);
+            }
+            int64_t elapsed = esp_timer_get_time() - start;
+            uint32_t fps_x10 = frames > 0 ? (uint32_t)((frames * 10000000ULL) / elapsed) : 0;
+            uint32_t avg_size = frames > 0 ? total_bytes / frames : 0;
+            printf("frames: %u\n", (unsigned)frames);
+            printf("fps: %u.%u\n", (unsigned)(fps_x10 / 10), (unsigned)(fps_x10 % 10));
+            printf("avg_size: %u\n", (unsigned)avg_size);
+            printf("max_size: %u\n", (unsigned)max_size);
+            printf("throughput: %u KB/s\n", (unsigned)(total_bytes / 5 / 1024));
+            camera_configure_photo();
+        }
+    } else if (strcmp(line, "photo") == 0) {
+        if (video_is_recording()) {
+            printf("error: video recording in progress\n");
+        } else if (!sdcard_is_mounted()) {
             printf("error: SD card not mounted\n");
         } else if (!camera_capture_to_sd("/sd/PHOTO.JPG")) {
             printf("error: capture failed\n");

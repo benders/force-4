@@ -1,6 +1,6 @@
 # Architecture
 
-ESP-IDF v5.4 application running two FreeRTOS tasks on an ESP32-S3.
+ESP-IDF v5.4 application running FreeRTOS tasks on an ESP32-S3.
 
 ## Tasks
 
@@ -8,9 +8,10 @@ ESP-IDF v5.4 application running two FreeRTOS tasks on an ESP32-S3.
 |--------------------|------------|----------|-------|----------------------------------------------|
 | `flight_task`      | 1 (pinned) | 5        | 4096  | Sensor polling, state machine, launch detect |
 | `log_write_task`   | 0 (pinned) | 5        | 4096  | SPIFFS writes (decoupled from FIFO reads)    |
+| `video_task`       | 0 (pinned) | 4        | 4096  | Camera capture → AVI on SD card (optional)   |
 | `serial_cmd_task`  | any        | 3        | 4096  | Serial command handler (stdin/stdout)        |
 
-`flight_task` and `log_write_task` only run in flight mode. `serial_cmd_task` runs in both modes.
+`flight_task`, `log_write_task`, and `video_task` only run in flight mode. `video_task` requires `CONFIG_FORCE4_CAMERA`. `serial_cmd_task` runs in both modes.
 
 ## Modules
 
@@ -23,6 +24,7 @@ serial_cmd.c/.h   Command dispatch, response framing
 led.c/.h          LEDC PWM patterns (breathe, flash, transfer, blink)
 sdcard.c/.h       SD card support (ifdef CONFIG_FORCE4_SD_CARD; see below)
 camera.c/.h       OV3660 camera support (ifdef CONFIG_FORCE4_CAMERA; see below)
+video.c/.h        MJPEG AVI video recording during flight (ifdef CONFIG_FORCE4_CAMERA)
 ```
 
 ## State machine
@@ -48,7 +50,7 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 
 - Boot marker: `FORCE4:READY\n` (printed at startup for diagnostics; mission-control does not wait for it)
 - Response framing: `---BEGIN---\n` ... `---END---\n` around every command response
-- Commands: `ls`, `cat <file>`, `rm <file>`, `format`, `status`, `trigger`, `transfer`, `resume`, `ping`, `go`, `abort`, `help` (plus `ls --sd`, `cat --sd <file>`, `rm --sd <file>`, `format --sd`, `sdtest [N]`, `sdinfo` when SD enabled; `photo` when camera enabled)
+- Commands: `ls`, `cat <file>`, `rm <file>`, `format`, `status`, `trigger`, `transfer`, `resume`, `ping`, `go`, `abort`, `help` (plus `ls --sd`, `cat --sd <file>`, `rm --sd <file>`, `format --sd`, `sdtest [N]`, `sdinfo` when SD enabled; `photo`, `vidtest` when camera enabled)
 - **Two-step binary transfer protocol** (receiver-initiated, inspired by XModem):
   1. `cat <file>` (or `cat --sd <file>`) prepares the transfer and responds with `ready size:N\n` inside the normal `---BEGIN---`/`---END---` framing. No binary is sent yet.
   2. `go` — sent by the host when ready — streams exactly N raw bytes with **no framing whatsoever**. LF→CRLF conversion is disabled before and restored after. `go` returns immediately (no `---BEGIN---`/`---END---`).
@@ -205,14 +207,43 @@ OV3660 camera on XIAO ESP32-S3 Sense board, connected via parallel DVP interface
 
 ### Configuration
 
-QXGA (2048×1536), JPEG format, quality 12, single frame buffer in PSRAM (`CAMERA_FB_IN_PSRAM`, `CAMERA_GRAB_WHEN_EMPTY`).
+Boot: QXGA (2048×1536), JPEG quality 12, 1 frame buffer, `CAMERA_GRAB_WHEN_EMPTY`. Camera is reconfigured at runtime for video (see below) and restored to photo mode after each flight.
 
 **Frame discard:** `camera_init()` discards 5 frames after sensor configuration so AEC/AWB can converge (adds ~1 s to boot). `camera_capture_to_sd()` discards one stale buffered frame before each capture so the saved image reflects the current scene, not whatever was buffered previously.
 
-### Command
+### Commands
 
-| Command | Description                                          |
-|---------|------------------------------------------------------|
-| `photo` | Capture JPEG frame, save to `/sd/PHOTO.JPG` on SD   |
+| Command   | Description                                          |
+|-----------|------------------------------------------------------|
+| `photo`   | Capture JPEG frame, save to `/sd/PHOTO.JPG` on SD   |
+| `vidtest` | Benchmark video capture for 5 s (fps, frame sizes)   |
 
 `mission-control photo` captures and downloads `PHOTO.JPG` in one step, verifying the JPEG magic bytes (`FFD8FF`).
+
+## Video recording (optional)
+
+Automatically records MJPEG AVI video to the SD card during each flight. Enabled when `CONFIG_FORCE4_CAMERA` is set (implies SD card). Resolution is configurable via `CONFIG_FORCE4_VIDEO_RESOLUTION` in Kconfig:
+
+| Setting              | Resolution  | Expected fps | Data rate    | 60 s file |
+|----------------------|-------------|-------------|-------------|-----------|
+| `FORCE4_VIDEO_SVGA`  | 800×600     | ~10 fps     | ~400 KB/s   | ~24 MB    |
+| `FORCE4_VIDEO_QXGA`  | 2048×1536   | ~2 fps      | ~600 KB/s   | ~36 MB    |
+
+### Pipeline
+
+1. On IDLE → LOGGING transition, `flight_logger` calls `camera_configure_video()` (reconfigures to video resolution, 2 frame buffers, `CAMERA_GRAB_LATEST` via `esp_camera_reconfigure()`), then `video_start(flight_num)`.
+2. `video_task` (Core 0, priority 4) wakes and enters a capture loop: `esp_camera_fb_get()` → write AVI frame chunk → `esp_camera_fb_return()`.
+3. On LOGGING → COOLDOWN, `flight_logger` calls `video_stop()` which signals the task to finalize, then `camera_configure_photo()` to restore QXGA for photos.
+
+### AVI format
+
+Standard RIFF/AVI container with MJPEG codec. Playable in VLC, ffmpeg, etc.
+
+- **Header (224 bytes):** written as a placeholder at file open; fixed up after recording with actual frame count, timing, and file size via `fseek(0)`.
+- **Frame chunks:** `00dc` + size + JPEG data + pad byte (RIFF word alignment).
+- **Index (`idx1`):** one 16-byte entry per frame, buffered in a PSRAM array during recording and appended after the last frame. Capped at 1200 entries.
+- **File naming:** `/sd/FLIGHT_NNN.AVI` (FAT uppercases it), matching the accelerometer file `flight_NNN` on SPIFFS.
+
+### Task interaction
+
+`video_task` runs on Core 0 at priority 4, below `log_write_task` (priority 5). Sensor data writes to SPIFFS (internal flash) always preempt video writes to SD (SPI2_HOST) — different buses, no I/O contention. Camera DMA runs in hardware; `esp_camera_fb_get()` blocks on a semaphore and releases the CPU. `CAMERA_GRAB_LATEST` drops stale frames if the SD writer falls behind, so the AVI simply has fewer frames rather than stalling.

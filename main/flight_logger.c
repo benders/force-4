@@ -12,6 +12,11 @@
 #include <string.h>
 #include <sys/stat.h>
 #include "esp_heap_caps.h"
+#include "sdkconfig.h"
+#ifdef CONFIG_FORCE4_CAMERA
+#include "camera.h"
+#include "video.h"
+#endif
 
 static const char *TAG = "flight";
 
@@ -304,6 +309,10 @@ void flight_task(void *pvParameters)
                     logging_start_us = esp_timer_get_time();
                     flight_count++;
                     ESP_LOGI(TAG, "Manual trigger! Recording flight_%03d", s_flight_num);
+#ifdef CONFIG_FORCE4_CAMERA
+                    camera_configure_video();
+                    video_start(s_flight_num);
+#endif
                 } else {
                     ESP_LOGE(TAG, "Manual trigger skipped — no ready file");
                 }
@@ -374,6 +383,10 @@ void flight_task(void *pvParameters)
                                 logging_start_us = esp_timer_get_time();
                                 flight_count++;
                                 ESP_LOGI(TAG, "Launch! Recording flight_%03d", s_flight_num);
+#ifdef CONFIG_FORCE4_CAMERA
+                                camera_configure_video();
+                                video_start(s_flight_num);
+#endif
                             } else {
                                 ESP_LOGE(TAG, "Skipping flight — no ready file");
                                 launch_count = 0;
@@ -428,6 +441,10 @@ void flight_task(void *pvParameters)
                     ESP_LOGI(TAG, "Recording complete. Flushing...");
                     state = FLIGHT_STATE_COOLDOWN;
 
+#ifdef CONFIG_FORCE4_CAMERA
+                    video_stop();
+#endif
+
                     // Signal log_write_task to drain and close the file
                     s_log_flush = true;
 
@@ -448,6 +465,9 @@ void flight_task(void *pvParameters)
                     s_ring_tail = 0;
                     launch_count = 0;
 
+#ifdef CONFIG_FORCE4_CAMERA
+                    camera_configure_photo();
+#endif
                     state = FLIGHT_STATE_IDLE;
                     prepare_idle_file();
                     enter_idle_sleep();

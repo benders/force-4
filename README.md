@@ -1,6 +1,6 @@
 # Force-4
 
-Native C (ESP-IDF) rocket flight data logger. Records +-200g accelerometer data at 800 Hz to onboard flash. Successor to [force-3](../force-3) (CircuitPython).
+Native C (ESP-IDF) rocket flight data logger. Records +-200g accelerometer data at 800 Hz to onboard flash, with optional MJPEG video recording to SD card. Successor to [force-3](../force-3) (CircuitPython).
 
 ## Hardware
 

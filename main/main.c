@@ -25,6 +25,7 @@
 #endif
 #ifdef CONFIG_FORCE4_CAMERA
 #include "camera.h"
+#include "video.h"
 #endif
 
 static const char *TAG = "main";
@@ -151,6 +152,11 @@ void app_main(void)
             xTaskCreatePinnedToCore(
                 log_write_task, "log_write", FLIGHT_TASK_STACK,
                 NULL, 5, NULL, 0);
+#ifdef CONFIG_FORCE4_CAMERA
+            xTaskCreatePinnedToCore(
+                video_task, "video", FLIGHT_TASK_STACK,
+                NULL, 4, NULL, 0);
+#endif
             xTaskCreatePinnedToCore(
                 flight_task, "flight", FLIGHT_TASK_STACK,
                 NULL, 5, NULL, 1);

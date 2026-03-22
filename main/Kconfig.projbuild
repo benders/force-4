@@ -12,4 +12,13 @@ menu "Force-4 Configuration"
         help
             Enable OV3660 camera support. Images are saved to the SD card (/sd/).
             Requires the XIAO ESP32-S3 Sense expansion board.
+    choice FORCE4_VIDEO_RESOLUTION
+        prompt "Video resolution"
+        default FORCE4_VIDEO_SVGA
+        depends on FORCE4_CAMERA
+        config FORCE4_VIDEO_SVGA
+            bool "SVGA (800x600, ~10 fps)"
+        config FORCE4_VIDEO_QXGA
+            bool "QXGA (2048x1536, ~2 fps)"
+    endchoice
 endmenu

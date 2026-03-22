@@ -66,9 +66,13 @@ Enabled by `CONFIG_FORCE4_SD_CARD` in `main/Kconfig.projbuild`. SD card owns SPI
 - **Space calculations require `uint64_t`** — `size_t` is 32-bit on ESP32-S3 and overflows on cards larger than ~4 GiB.
 - **`sys/statvfs.h` is unavailable** in ESP-IDF's newlib — use the FATFS `f_getfree()` API instead.
 
+## Video recording
+
+Video is recorded automatically during flight when `CONFIG_FORCE4_CAMERA` is enabled. Resolution is set by `CONFIG_FORCE4_VIDEO_RESOLUTION` in Kconfig (SVGA or QXGA). The camera is reconfigured between video mode (2 frame buffers, `CAMERA_GRAB_LATEST`) and photo mode (`QXGA`, 1 buffer) at flight start/end via `esp_camera_reconfigure()`. AVI files are saved to `/sd/FLIGHT_NNN.AVI`. See `ARCHITECTURE.md` for pipeline details.
+
 ## Architecture and code conventions
 
-See `ARCHITECTURE.md` for: state machine, tasks, modules, PSRAM ring buffer, interrupt-driven idle, flash I/O gap fix, flight file lifecycle, SD card module, and code conventions.
+See `ARCHITECTURE.md` for: state machine, tasks, modules, PSRAM ring buffer, interrupt-driven idle, flash I/O gap fix, flight file lifecycle, SD card module, video recording, and code conventions.
 
 ## Style
 

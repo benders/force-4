@@ -12,3 +12,5 @@ __pycache__/
 # Flight data
 flight_*.csv
 flight_*.png
+*.JPG
+*.jpg

@@ -1,10 +1,10 @@
 # I2C Implementation Notes (ESP32-S3 + ADXL375)
 
-Learnings from the ADXL375 integration. Useful reference if I2C is used again (e.g., other sensors via STEMMA QT).
+Learnings from the ADXL375 integration. Useful reference if I2C is used again.
 
 ## Physical connection
 
-- SDA = GPIO5 (D4), SCL = GPIO6 (D5) via STEMMA QT connector
+- SDA = GPIO5 (D4), SCL = GPIO6 (D5) wired to ADXL375 breakout board pins
 - Internal ESP32-S3 pull-ups (~45 kΩ) work reliably at 400 kHz / 3.3 V for cable lengths ≤ 10 cm
 - External 4.7 kΩ pull-ups required at longer cable lengths
 

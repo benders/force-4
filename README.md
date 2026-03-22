@@ -5,15 +5,15 @@ Native C (ESP-IDF) rocket flight data logger. Records +-200g accelerometer data 
 ## Hardware
 
 - **Board:** Seeed XIAO ESP32-S3 (8 MB flash)
-- **Sensor:** Adafruit ADXL375 +-200g accelerometer (I2C, 400 kHz, via STEMMA QT)
+- **Sensor:** Adafruit ADXL375 +-200g accelerometer (I2C, 400 kHz)
 - **LED:** External on D0 (GPIO1), active-high, 330Ω resistor to GND
 
 ### Wiring
 
 | XIAO Pin    | Connection                                |
 |-------------|-------------------------------------------|
-| D4 (GPIO5)  | ADXL375 SDA (STEMMA QT)                 |
-| D5 (GPIO6)  | ADXL375 SCL (STEMMA QT)                 |
+| D4 (GPIO5)  | ADXL375 SDA (on breakout board)          |
+| D5 (GPIO6)  | ADXL375 SCL (on breakout board)          |
 | D3 (GPIO4)  | ADXL375 INT1                             |
 | D0 (GPIO1)  | LED anode via 330Ω resistor (to GND)     |
 | 3V3         | ADXL375 VIN + CS (tie CS high for I2C)   |

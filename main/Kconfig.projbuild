@@ -6,10 +6,10 @@ menu "Force-4 Configuration"
             Enable microSD card support via SPI on GPIO21 (CS).
             Requires the XIAO ESP32-S3 Sense expansion board.
     config FORCE4_CAMERA
-        bool "Enable OV2640 camera (XIAO Sense expansion board)"
+        bool "Enable OV3660 camera (XIAO Sense expansion board)"
         depends on FORCE4_SD_CARD
         default n
         help
-            Enable OV2640 camera support. Images are saved to the SD card (/sd/).
+            Enable OV3660 camera support. Images are saved to the SD card (/sd/).
             Requires the XIAO ESP32-S3 Sense expansion board.
 endmenu

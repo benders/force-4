@@ -36,5 +36,5 @@ CONFIG_SPI_FLASH_AUTO_SUSPEND=y
 # SD card support (XIAO Sense expansion board, CS=GPIO21 on SPI2_HOST)
 CONFIG_FORCE4_SD_CARD=y
 
-# Camera support (OV2640 on XIAO Sense board, uses LEDC_TIMER_1/CHANNEL_1 for XCLK)
+# Camera support (OV3660 on XIAO Sense board, uses LEDC_TIMER_1/CHANNEL_1 for XCLK)
 CONFIG_FORCE4_CAMERA=y

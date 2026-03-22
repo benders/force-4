@@ -1,6 +1,6 @@
 # Test Plan
 
-End-to-end flight recording test. ADXL375 connected via I2C (STEMMA QT: SDA=GPIO5, SCL=GPIO6) with INT1 wired separately to GPIO4 (D3).
+End-to-end flight recording test. ADXL375 connected via I2C (SDA=GPIO5, SCL=GPIO6) with INT1 wired to GPIO4 (D3).
 
 ## Steps
 

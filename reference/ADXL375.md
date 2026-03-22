@@ -1,6 +1,6 @@
 # ADXL375 ±200g Accelerometer
 
-3-axis MEMS accelerometer with ±200g full range. Available on Adafruit breakout with STEMMA QT connector. Datasheet: `ADXL375.pdf` in this directory.
+3-axis MEMS accelerometer with ±200g full range. Available on Adafruit breakout board. Datasheet: `ADXL375.pdf` in this directory.
 
 ## Interface
 

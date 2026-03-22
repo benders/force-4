@@ -22,7 +22,7 @@ storage.c/.h      SPIFFS mount, flight file lifecycle, binary record writing
 serial_cmd.c/.h   Command dispatch, response framing
 led.c/.h          LEDC PWM patterns (breathe, flash, transfer, blink)
 sdcard.c/.h       SD card support (ifdef CONFIG_FORCE4_SD_CARD; see below)
-camera.c/.h       OV2640/OV3660 camera support (ifdef CONFIG_FORCE4_CAMERA; see below)
+camera.c/.h       OV3660 camera support (ifdef CONFIG_FORCE4_CAMERA; see below)
 ```
 
 ## State machine
@@ -88,7 +88,7 @@ I2C can have stuck-bus conditions if the ESP32 resets mid-transaction while the 
 
 ADXL375 INT1 → GPIO4 drives `flight_task` via FreeRTOS task notification instead of polling.
 
-**INT1 requires a separate wire** — the STEMMA QT connector only carries SDA, SCL, 3V3, and GND. Without INT1 connected, the 50 ms safety timeout exceeds the FIFO overflow window (32 samples at 800 Hz = 40 ms), causing sample loss and degraded data quality (~505 Hz effective rate). With INT1, the watermark interrupt wakes the task at ~20 ms intervals, well before overflow.
+**INT1 requires its own wire** in addition to SDA, SCL, 3V3, and GND. Without INT1 connected, the 50 ms safety timeout exceeds the FIFO overflow window (32 samples at 800 Hz = 40 ms), causing sample loss and degraded data quality (~505 Hz effective rate). With INT1, the watermark interrupt wakes the task at ~20 ms intervals, well before overflow.
 
 | State         | INT1 source | Behavior                                              |
 |---------------|-------------|-------------------------------------------------------|
@@ -189,7 +189,7 @@ Enabled by `CONFIG_FORCE4_CAMERA` in `main/Kconfig.projbuild` (depends on `CONFI
 
 ### Hardware
 
-OV2640/OV3660 camera on XIAO ESP32-S3 Sense board, connected via parallel DVP interface (I2C/SCCB for configuration, 8-bit parallel data bus for pixel data). Does not share the SPI2_HOST bus.
+OV3660 camera on XIAO ESP32-S3 Sense board, connected via parallel DVP interface (I2C/SCCB for configuration, 8-bit parallel data bus for pixel data). Does not share the SPI2_HOST bus.
 
 | Signal   | GPIO | Signal  | GPIO |
 |----------|------|---------|------|

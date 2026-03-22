@@ -30,7 +30,7 @@
 static const char *TAG = "main";
 
 // XIAO ESP32-S3 GPIO assignments
-// I2C (STEMMA QT): SDA=GPIO5 (D4), SCL=GPIO6 (D5) — ADXL375
+// I2C (ADXL375):   SDA=GPIO5 (D4), SCL=GPIO6 (D5)
 // SPI (SD card):    SCLK=GPIO7 (D8), MOSI=GPIO9 (D10), MISO=GPIO8 (D9), SD_CS=GPIO21
 // INT1=GPIO4 (D3), Boot=GPIO9 (D10, read before SPI init), LED=GPIO1 (D0)
 #define GPIO_BOOT_MODE  GPIO_NUM_9

@@ -43,8 +43,8 @@ Opening the serial port over USB Serial/JTAG does **not** assert DTR or reset th
 | D1         | GPIO2  |                                          |
 | D2         | GPIO3  |                                          |
 | D3         | GPIO4  |                                          |
-| D4         | GPIO5  | SDA (STEMMA QT)                          |
-| D5         | GPIO6  | SCL (STEMMA QT)                          |
+| D4         | GPIO5  | SDA (I2C)                                |
+| D5         | GPIO6  | SCL (I2C)                                |
 | D6         | GPIO43 | UART TX                                  |
 | D7         | GPIO44 | UART RX                                  |
 | D8         | GPIO7  | SCK                                      |
@@ -52,7 +52,7 @@ Opening the serial port over USB Serial/JTAG does **not** assert DTR or reset th
 | D10        | GPIO9  | MOSI / Boot strapping (pull-up = normal) |
 | LED        | GPIO21 | Built-in LED, **active-low**; conflicts with Sense module (see below) |
 
-The STEMMA QT connector brings out GPIO5 (SDA), GPIO6 (SCL), 3V3, and GND — no soldering needed for I2C peripherals.
+The STEMMA QT connector brings out GPIO5 (SDA), GPIO6 (SCL), 3V3, and GND. However, Force-4 wires directly to the ADXL375 breakout board pins (SDA, SCL, VIN, GND) rather than using the connector.
 
 ### GPIO21 conflict with XIAO ESP32-S3 Sense module
 

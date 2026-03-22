@@ -20,9 +20,9 @@ The XIAO ESP32-S3 uses the **USB Serial/JTAG controller**, not USB-OTG. See `ref
 
 ## GPIO mapping
 
-I2C (STEMMA QT, ADXL375): SDA=GPIO5 (D4), SCL=GPIO6 (D5). SPI (SD card only): SCLK=GPIO7 (D8), MOSI=GPIO9 (D10), MISO=GPIO8 (D9), SD_CS=GPIO21 (Sense board). INT1=GPIO4 (D3), Boot=GPIO9 (D10, read before SPI init), LED=GPIO1 (D0, active-high, external)
+I2C (ADXL375 breakout board pins): SDA=GPIO5 (D4), SCL=GPIO6 (D5). SPI (SD card only): SCLK=GPIO7 (D8), MOSI=GPIO9 (D10), MISO=GPIO8 (D9), SD_CS=GPIO21 (Sense board). INT1=GPIO4 (D3), Boot=GPIO9 (D10, read before SPI init), LED=GPIO1 (D0, active-high, external)
 
-Camera (Sense board, OV2640/OV3660): XCLK=GPIO10, SIOD=GPIO40, SIOC=GPIO39, PCLK=GPIO13, VSYNC=GPIO38, HREF=GPIO47, D0–D7=GPIO15/17/18/16/14/12/11/48. LED uses LEDC_TIMER_0/CHANNEL_0; camera XCLK uses LEDC_TIMER_1/CHANNEL_1.
+Camera (Sense board, OV3660): XCLK=GPIO10, SIOD=GPIO40, SIOC=GPIO39, PCLK=GPIO13, VSYNC=GPIO38, HREF=GPIO47, D0–D7=GPIO15/17/18/16/14/12/11/48. LED uses LEDC_TIMER_0/CHANNEL_0; camera XCLK uses LEDC_TIMER_1/CHANNEL_1.
 
 ## Serial protocol
 

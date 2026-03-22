@@ -224,16 +224,20 @@ Boot: QXGA (2048×1536), JPEG quality 12, 1 frame buffer, `CAMERA_GRAB_WHEN_EMPT
 
 Automatically records MJPEG AVI video to the SD card during each flight. Enabled when `CONFIG_FORCE4_CAMERA` is set (implies SD card). Resolution is configurable via `CONFIG_FORCE4_VIDEO_RESOLUTION` in Kconfig:
 
-| Setting              | Resolution  | Expected fps | Data rate    | 60 s file |
-|----------------------|-------------|-------------|-------------|-----------|
-| `FORCE4_VIDEO_SVGA`  | 800×600     | ~10 fps     | ~400 KB/s   | ~24 MB    |
-| `FORCE4_VIDEO_QXGA`  | 2048×1536   | ~2 fps      | ~600 KB/s   | ~36 MB    |
+| Setting              | Resolution  | Benchmark fps | Flight fps | 60 s file |
+|----------------------|-------------|--------------|------------|-----------|
+| `FORCE4_VIDEO_SVGA`  | 800×600     | ~27 fps      | ~3 fps     | ~5 MB     |
+| `FORCE4_VIDEO_QXGA`  | 2048×1536   | ~11 fps      | ~0.5 fps   | ~4 MB     |
+
+Flight fps is lower than benchmark because `log_write_task` (priority 5) preempts `video_task` (priority 4) on Core 0. SVGA is the default and recommended setting.
 
 ### Pipeline
 
-1. On IDLE → LOGGING transition, `flight_logger` calls `camera_configure_video()` (reconfigures to video resolution, 2 frame buffers, `CAMERA_GRAB_LATEST` via `esp_camera_reconfigure()`), then `video_start(flight_num)`.
-2. `video_task` (Core 0, priority 4) wakes and enters a capture loop: `esp_camera_fb_get()` → write AVI frame chunk → `esp_camera_fb_return()`.
-3. On LOGGING → COOLDOWN, `flight_logger` calls `video_stop()` which signals the task to finalize, then `camera_configure_photo()` to restore QXGA for photos.
+1. On IDLE → LOGGING transition, `flight_logger` calls `video_start(flight_num)` which is non-blocking — it just stores the flight number and sends a task notification.
+2. `video_task` (Core 0, priority 4) wakes, calls `camera_configure_video()` to reconfigure to video resolution (2 frame buffers, `CAMERA_GRAB_LATEST` via `esp_camera_reconfigure()`), opens the AVI file, and enters a capture loop: `esp_camera_fb_get()` → write AVI frame chunk → `esp_camera_fb_return()`.
+3. On LOGGING → COOLDOWN, `flight_logger` calls `video_stop()` (non-blocking, sets a flag). After sensor data is flushed, `video_wait()` blocks until `video_task` finalizes the AVI and calls `camera_configure_photo()` to restore QXGA for photos.
+
+All blocking camera and file I/O operations run in `video_task` on Core 0, so `flight_task` on Core 1 is never stalled.
 
 ### AVI format
 
@@ -242,7 +246,7 @@ Standard RIFF/AVI container with MJPEG codec. Playable in VLC, ffmpeg, etc.
 - **Header (224 bytes):** written as a placeholder at file open; fixed up after recording with actual frame count, timing, and file size via `fseek(0)`.
 - **Frame chunks:** `00dc` + size + JPEG data + pad byte (RIFF word alignment).
 - **Index (`idx1`):** one 16-byte entry per frame, buffered in a PSRAM array during recording and appended after the last frame. Capped at 1200 entries.
-- **File naming:** `/sd/FLIGHT_NNN.AVI` (FAT uppercases it), matching the accelerometer file `flight_NNN` on SPIFFS.
+- **File naming:** `/sd/FLT_NNN.AVI` (8.3 FAT compliant), matching the accelerometer file `flight_NNN` on SPIFFS.
 
 ### Task interaction
 

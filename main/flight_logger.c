@@ -14,7 +14,6 @@
 #include "esp_heap_caps.h"
 #include "sdkconfig.h"
 #ifdef CONFIG_FORCE4_CAMERA
-#include "camera.h"
 #include "video.h"
 #endif
 
@@ -310,7 +309,6 @@ void flight_task(void *pvParameters)
                     flight_count++;
                     ESP_LOGI(TAG, "Manual trigger! Recording flight_%03d", s_flight_num);
 #ifdef CONFIG_FORCE4_CAMERA
-                    camera_configure_video();
                     video_start(s_flight_num);
 #endif
                 } else {
@@ -384,7 +382,6 @@ void flight_task(void *pvParameters)
                                 flight_count++;
                                 ESP_LOGI(TAG, "Launch! Recording flight_%03d", s_flight_num);
 #ifdef CONFIG_FORCE4_CAMERA
-                                camera_configure_video();
                                 video_start(s_flight_num);
 #endif
                             } else {
@@ -454,6 +451,12 @@ void flight_task(void *pvParameters)
                         vTaskDelay(pdMS_TO_TICKS(10));
                     }
 
+#ifdef CONFIG_FORCE4_CAMERA
+                    // Wait for video finalization (AVI close + camera restore)
+                    // after sensor data is flushed so Core 0 is free
+                    video_wait();
+#endif
+
                     led_blink_n(3);
                     led_off();
                     vTaskDelay(pdMS_TO_TICKS(IDLE_COOLDOWN_MS));
@@ -465,9 +468,6 @@ void flight_task(void *pvParameters)
                     s_ring_tail = 0;
                     launch_count = 0;
 
-#ifdef CONFIG_FORCE4_CAMERA
-                    camera_configure_photo();
-#endif
                     state = FLIGHT_STATE_IDLE;
                     prepare_idle_file();
                     enter_idle_sleep();

@@ -649,6 +649,14 @@ def cmd_sdinfo(device, args):
         print(dev.send('sdinfo'))
 
 
+def cmd_vidtest(device, args):
+    """Benchmark video capture: reports fps, frame sizes, throughput."""
+    device.require_idle()
+    print('Running video benchmark (5 seconds) ...')
+    resp = device.send('vidtest', timeout=15.0)
+    print(resp)
+
+
 def cmd_photo(device, args):
     """Capture a JPEG photo and download it from the SD card."""
     out = args.output
@@ -732,6 +740,7 @@ _COMMANDS = {
     'sdtest':  cmd_sdtest,
     'sdinfo':  cmd_sdinfo,
     # camera
+    'vidtest': cmd_vidtest,
     'photo':   cmd_photo,
 }
 
@@ -789,6 +798,7 @@ def main():
     sub.add_parser('sdinfo', help='Show SD card mount status and free space')
 
     # Camera commands
+    sub.add_parser('vidtest', help='Benchmark video capture for 5 seconds')
     p = sub.add_parser('photo', help='Capture JPEG photo and download from SD card')
     p.add_argument('--output', '-o', default='PHOTO.JPG',
                    help='Output filename (default: PHOTO.JPG)')

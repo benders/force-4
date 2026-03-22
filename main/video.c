@@ -2,6 +2,7 @@
 #ifdef CONFIG_FORCE4_CAMERA
 
 #include "video.h"
+#include "camera.h"
 #include "sdcard.h"
 #include "esp_camera.h"
 #include "esp_log.h"
@@ -35,6 +36,7 @@ typedef struct {
 // ---------------------------------------------------------------------------
 static volatile bool s_recording = false;
 static volatile bool s_stop_requested = false;
+static volatile int  s_pending_flight = -1;  // flight num queued for start
 static TaskHandle_t  s_video_task_handle = NULL;
 
 // AVI recording state (only accessed from video_task)
@@ -212,72 +214,26 @@ bool video_is_recording(void)
     return s_recording;
 }
 
-bool video_start(int flight_num)
+void video_start(int flight_num)
 {
-    if (s_recording) return false;
-    if (!sdcard_is_mounted()) {
-        ESP_LOGE(TAG, "SD card not mounted");
-        return false;
-    }
-
-    // Allocate index buffer from PSRAM
-    if (!s_index) {
-        s_index = heap_caps_malloc(MAX_INDEX_ENTRIES * sizeof(avi_idx_entry_t),
-                                   MALLOC_CAP_SPIRAM);
-        if (!s_index) {
-            ESP_LOGE(TAG, "Failed to allocate index buffer");
-            return false;
-        }
-    }
-
-    char path[32];
-    snprintf(path, sizeof(path), "/sd/flight_%03d.avi", flight_num);
-
-    s_avi_file = fopen(path, "wb");
-    if (!s_avi_file) {
-        ESP_LOGE(TAG, "Cannot open %s", path);
-        return false;
-    }
-
-    // Estimate ~10 fps for SVGA, ~2 fps for QXGA as initial header value.
-    // The fixup pass will correct this based on actual timing.
-#ifdef CONFIG_FORCE4_VIDEO_QXGA
-    uint32_t us_per_frame = 500000;  // 2 fps
-#else
-    uint32_t us_per_frame = 100000;  // 10 fps
-#endif
-
-    s_frame_count = 0;
-    s_max_frame_size = 0;
-    s_movi_offset = 0;
-
-    if (!avi_write_header(s_avi_file, VIDEO_WIDTH, VIDEO_HEIGHT,
-                          us_per_frame, 0, 0, 0)) {
-        ESP_LOGE(TAG, "Failed to write AVI header");
-        fclose(s_avi_file);
-        s_avi_file = NULL;
-        return false;
-    }
-
     s_stop_requested = false;
-    s_recording = true;
+    s_pending_flight = flight_num;
 
-    // Wake the video task
+    // Wake the video task — it handles camera reconfigure + file open on Core 0
     if (s_video_task_handle) {
         xTaskNotifyGive(s_video_task_handle);
     }
-
-    ESP_LOGI(TAG, "Video recording started: %s (%ux%u)",
-             path, (unsigned)VIDEO_WIDTH, (unsigned)VIDEO_HEIGHT);
-    return true;
 }
 
 void video_stop(void)
 {
     if (!s_recording) return;
     s_stop_requested = true;
+    // Non-blocking: the task will finalize on its own
+}
 
-    // Wait for the task to finish writing
+void video_wait(void)
+{
     while (s_recording) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -295,10 +251,54 @@ void video_task(void *pvParameters)
         // Sleep until video_start() wakes us
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        if (!s_recording || !s_avi_file) continue;
+        int flight_num = s_pending_flight;
+        s_pending_flight = -1;
+        if (flight_num < 0) continue;
+
+        // All blocking operations happen here on Core 0 so flight_task
+        // on Core 1 is never stalled.
+
+        // Reconfigure camera for video mode
+        if (!camera_configure_video()) {
+            ESP_LOGE(TAG, "Camera video mode failed");
+            continue;
+        }
+
+        // Open AVI file
+        char path[32];
+        snprintf(path, sizeof(path), "/sd/FLT_%03d.AVI", flight_num);
+
+        // Allocate index buffer from PSRAM
+        s_index = heap_caps_malloc(MAX_INDEX_ENTRIES * sizeof(avi_idx_entry_t),
+                                   MALLOC_CAP_SPIRAM);
+        if (!s_index) {
+            ESP_LOGE(TAG, "Cannot allocate index buffer");
+            camera_configure_photo();
+            continue;
+        }
+
+        s_avi_file = fopen(path, "wb");
+        if (!s_avi_file) {
+            ESP_LOGE(TAG, "Cannot open %s", path);
+            heap_caps_free(s_index);
+            s_index = NULL;
+            camera_configure_photo();
+            continue;
+        }
+
+        s_frame_count = 0;
+        s_max_frame_size = 0;
+
+        // Write placeholder header
+        avi_write_header(s_avi_file, VIDEO_WIDTH, VIDEO_HEIGHT,
+                         100000, 0, 0, AVI_HEADER_SIZE);
+
+        s_recording = true;
+        ESP_LOGI(TAG, "Recording %s (%ux%u)", path,
+                 (unsigned)VIDEO_WIDTH, (unsigned)VIDEO_HEIGHT);
 
         int64_t start_us = esp_timer_get_time();
-        uint32_t movi_data_size = 0;  // bytes written inside the movi LIST
+        uint32_t movi_data_size = 0;
 
         // Discard first frame (may be stale from before reconfigure)
         camera_fb_t *stale = esp_camera_fb_get();
@@ -384,6 +384,15 @@ void video_task(void *pvParameters)
             s_avi_file = NULL;
             ESP_LOGW(TAG, "Video aborted: no frames captured");
         }
+
+        // Free index buffer
+        if (s_index) {
+            heap_caps_free(s_index);
+            s_index = NULL;
+        }
+
+        // Restore camera to photo mode
+        camera_configure_photo();
 
         s_recording = false;
     }

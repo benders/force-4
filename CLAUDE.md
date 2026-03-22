@@ -68,7 +68,7 @@ Enabled by `CONFIG_FORCE4_SD_CARD` in `main/Kconfig.projbuild`. SD card owns SPI
 
 ## Video recording
 
-Video is recorded automatically during flight when `CONFIG_FORCE4_CAMERA` is enabled. Resolution is set by `CONFIG_FORCE4_VIDEO_RESOLUTION` in Kconfig (SVGA or QXGA). The camera is reconfigured between video mode (2 frame buffers, `CAMERA_GRAB_LATEST`) and photo mode (`QXGA`, 1 buffer) at flight start/end via `esp_camera_reconfigure()`. AVI files are saved to `/sd/FLIGHT_NNN.AVI`. See `ARCHITECTURE.md` for pipeline details.
+Video is recorded automatically during flight when `CONFIG_FORCE4_CAMERA` is enabled. Resolution is set by `CONFIG_FORCE4_VIDEO_RESOLUTION` in Kconfig (SVGA default, QXGA optional). All camera reconfiguration and file I/O happens in `video_task` on Core 0 — `flight_task` on Core 1 only calls the non-blocking `video_start()` / `video_stop()`. AVI files are saved to `/sd/FLT_NNN.AVI`. See `ARCHITECTURE.md` for pipeline details.
 
 ## Architecture and code conventions
 

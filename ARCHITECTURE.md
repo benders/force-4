@@ -15,8 +15,8 @@ ESP-IDF v5.4 application running two FreeRTOS tasks on an ESP32-S3.
 ## Modules
 
 ```
-main.c            Boot sequence, GPIO mode select, SPI bus init, task creation
-adxl375.c/.h      ADXL375 sensor driver (SPI, 4 MHz, Mode 3; see reference/ADXL375.md)
+main.c            Boot sequence, GPIO mode select, I2C/SPI bus init, task creation
+adxl375.c/.h      ADXL375 sensor driver (I2C, 400 kHz, addr 0x53; see reference/ADXL375.md)
 flight_logger.c/.h  State machine + ring buffer + CSV recording
 storage.c/.h      SPIFFS mount, flight file lifecycle, binary record writing
 serial_cmd.c/.h   Command dispatch, response framing
@@ -36,7 +36,7 @@ IDLE --(|a| > 3g for 50ms)--> LOGGING --(60s)--> COOLDOWN --(3s)--> IDLE
 
 ## Flight recording pipeline
 
-1. `flight_task` (Core 1) drains ADXL375 FIFO (up to 32 samples/read via SPI burst)
+1. `flight_task` (Core 1) drains ADXL375 FIFO (up to 32 samples/read via I2C burst)
 2. In IDLE: samples go into a 1600-entry pre-trigger ring buffer (2s at 800 Hz)
 3. On launch detect: pre-trigger buffer + live samples are pushed into a 16,000-entry PSRAM ring buffer (`s_log_ring`)
 4. `log_write_task` (Core 0) drains `s_log_ring` → binary records on SPIFFS. Flash erase stalls only Core 0; `flight_task` keeps reading the FIFO uninterrupted
@@ -78,15 +78,17 @@ Bidirectional over USB Serial/JTAG controller (not USB-OTG). Requires `usb_seria
 
 Scale: 49 mg/LSB (raw * 0.049 = g). Timestamps estimated backward from read time at 1250us intervals.
 
-General ADXL375 notes (activity detection, SPI framing, register reference): `reference/ADXL375.md`.
+General ADXL375 notes (activity detection, register reference): `reference/ADXL375.md`.
 
 ### Connection recovery
 
-SPI has no stuck-bus problem (CS idles high, no shared clock line). If `adxl375_init_on_bus()` fails (bad DEVID or SPI error), `main.c` retries every 5s for up to 5 minutes via `adxl375_reinit()`, which removes and re-adds the SPI device (bus remains initialized — it's shared with the SD card).
+I2C can have stuck-bus conditions if the ESP32 resets mid-transaction while the ADXL375 keeps power — the sensor may hold SDA low. `adxl375_reinit()` calls `i2c_master_bus_reset()` + 50 ms delay to clock out the stuck state, then re-probes. `main.c` retries every 5 s for up to 5 minutes. See `reference/I2C.md` for details.
 
 ## Interrupt-driven idle
 
 ADXL375 INT1 → GPIO4 drives `flight_task` via FreeRTOS task notification instead of polling.
+
+**INT1 requires a separate wire** — the STEMMA QT connector only carries SDA, SCL, 3V3, and GND. Without INT1 connected, the 50 ms safety timeout exceeds the FIFO overflow window (32 samples at 800 Hz = 40 ms), causing sample loss and degraded data quality (~505 Hz effective rate). With INT1, the watermark interrupt wakes the task at ~20 ms intervals, well before overflow.
 
 | State         | INT1 source | Behavior                                              |
 |---------------|-------------|-------------------------------------------------------|
@@ -144,16 +146,9 @@ General XIAO ESP32-S3 notes (USB Serial/JTAG setup, flash erase stalls): `refere
 
 Enabled by `CONFIG_FORCE4_SD_CARD` in `main/Kconfig.projbuild` (default off). All SD code is behind `#ifdef`; when disabled, `sdcard.h` provides no-op inline stubs.
 
-### SPI bus sharing
+### SPI bus
 
-SPI2_HOST is initialized once in `main.c` (shared by ADXL375 and SD card). Each device is added separately with its own CS pin and SPI mode — ESP-IDF handles per-device mode switching automatically:
-
-| Device  | CS     | SPI Mode | Clock   |
-|---------|--------|----------|---------|
-| ADXL375 | GPIO2  | 3        | 4 MHz   |
-| SD card | GPIO21 | 0        | 20 MHz  |
-
-`adxl375_reinit()` only removes/re-adds its device; it does not free the shared bus.
+SPI2_HOST is initialized in `main.c` only when SD card support is enabled. The ADXL375 uses I2C on a separate bus, so the SD card owns SPI2_HOST exclusively.
 
 ### Mount and filesystem
 

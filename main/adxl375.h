@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "driver/gpio.h"
+#include "driver/i2c_master.h"
 
 typedef struct {
     int64_t timestamp_us;
@@ -10,15 +10,14 @@ typedef struct {
 } adxl375_sample_t;
 
 /**
- * Initialize ADXL375 sensor on an already-initialized SPI bus (SPI2_HOST).
- * Only adds the SPI device and configures the sensor.
+ * Initialize ADXL375 sensor on an already-initialized I2C bus.
+ * Probes both addresses (0x53, 0x1D) and configures the sensor.
  * Returns true on success, false if sensor not found.
  */
-bool adxl375_init_on_bus(gpio_num_t cs);
+bool adxl375_init(i2c_master_bus_handle_t bus);
 
 /**
- * Remove and re-add the SPI device, then reconfigure the sensor.
- * Does NOT free the SPI bus (bus is shared).
+ * Reset the I2C bus, remove and re-add the device, then reconfigure.
  */
 bool adxl375_reinit(void);
 

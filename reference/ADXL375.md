@@ -4,21 +4,10 @@
 
 ## Interface
 
-- **SPI:** 4-wire, Mode 3 (CPOL=CPHA=1), up to 5 MHz. CS idles high; no bus-reset needed.
-- **I2C (alternate):** address 0x53 (ALT: 0x1D when SDO/CS pulled high), max 400 kHz
+This project uses **I2C** (400 kHz, address 0x53). See `reference/I2C.md` for ESP-IDF driver details.
 
-### SPI address-byte framing
-
-Each transaction starts with one address byte:
-
-| Bit  | 7   | 6  | 5:0             |
-|------|-----|----|-----------------|
-| Role | R/W | MB | Register addr   |
-
-- **R/W:** 1 = read, 0 = write
-- **MB:** 1 = multi-byte burst (set when reading >1 byte)
-
-Write: tx `[addr, val]`. Read: tx `[addr, 0x00…]`, rx `[garbage, data…]`.
+- **I2C:** address 0x53 (SDO/CS pin low) or 0x1D (SDO/CS pin high), max 400 kHz. CS pin must be tied high to select I2C mode. `adxl375_init()` probes both addresses.
+- **SPI (not used):** 4-wire, Mode 3 (CPOL=CPHA=1), up to 5 MHz. Requires address-byte framing with R/W (bit 7) and MB (bit 6) flags.
 
 ## Scale and output
 
@@ -86,11 +75,11 @@ For post-reset recovery details, see `ARCHITECTURE.md` (Connection recovery sect
 ## Initialization sequence
 
 ```
-1. SPI CS idles high; no bus-reset needed
-2. Verify DEVID == 0xE5
-3. Write POWER_CTL = 0x00   (standby)
+1. Reset I2C bus (i2c_master_bus_reset) to recover from stuck-SDA
+2. Probe address 0x53, fallback to 0x1D
+3. Verify DEVID == 0xE5
 4. Write DATA_FORMAT = 0x0B (full resolution, right-justified, ±200g)
-5. Write BW_RATE = 0x0C     (400 Hz)
+5. Write BW_RATE = 0x0D     (800 Hz)
 6. Configure FIFO_CTL, INT_ENABLE, INT_MAP as needed
 7. Write POWER_CTL = 0x08   (measurement mode)
 ```

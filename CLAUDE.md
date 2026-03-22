@@ -20,7 +20,7 @@ The XIAO ESP32-S3 uses the **USB Serial/JTAG controller**, not USB-OTG. See `ref
 
 ## GPIO mapping
 
-SCLK=GPIO7 (D8), MOSI=GPIO9 (D10), MISO=GPIO8 (D9), CS=GPIO2 (D1), INT1=GPIO4 (D3), Boot=GPIO9 (D10, read before SPI init), LED=GPIO1 (D0, active-high, external), SD_CS=GPIO21 (Sense board)
+I2C (STEMMA QT, ADXL375): SDA=GPIO5 (D4), SCL=GPIO6 (D5). SPI (SD card only): SCLK=GPIO7 (D8), MOSI=GPIO9 (D10), MISO=GPIO8 (D9), SD_CS=GPIO21 (Sense board). INT1=GPIO4 (D3), Boot=GPIO9 (D10, read before SPI init), LED=GPIO1 (D0, active-high, external)
 
 Camera (Sense board, OV2640/OV3660): XCLK=GPIO10, SIOD=GPIO40, SIOC=GPIO39, PCLK=GPIO13, VSYNC=GPIO38, HREF=GPIO47, D0–D7=GPIO15/17/18/16/14/12/11/48. LED uses LEDC_TIMER_0/CHANNEL_0; camera XCLK uses LEDC_TIMER_1/CHANNEL_1.
 
@@ -59,7 +59,7 @@ After `wipe` or `rm`, wait ~3 s before the next `status` call — trailing log b
 
 ## SD card (optional)
 
-Enabled by `CONFIG_FORCE4_SD_CARD` in `main/Kconfig.projbuild`. SD card shares SPI2_HOST with the ADXL375 (CS=GPIO21, Mode 0). SPI bus is initialized in `main.c`; `adxl375_reinit()` must not free the shared bus. When changing this Kconfig option, `rm -rf build sdkconfig` before rebuilding.
+Enabled by `CONFIG_FORCE4_SD_CARD` in `main/Kconfig.projbuild`. SD card owns SPI2_HOST exclusively (CS=GPIO21, Mode 0). SPI bus is only initialized when SD card support is enabled. When changing this Kconfig option, `rm -rf build sdkconfig` before rebuilding.
 
 - **`#ifdef CONFIG_*` guards at the top of `.c` files** must be preceded by `#include "sdkconfig.h"` — ESP-IDF does not auto-include it; the guard evaluates false and the entire file compiles empty (silently) if the include is missing.
 - **FAT uppercases filenames** — host-side searches must be case-insensitive.

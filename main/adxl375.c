@@ -1,5 +1,4 @@
 #include "adxl375.h"
-#include "driver/spi_master.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -34,43 +33,32 @@ static const char *TAG = "adxl375";
 
 #define MG_PER_LSB          0.049f
 
-// SPI address byte framing (ADXL375 protocol):
-//   bit 7: R/W (1=read, 0=write)
-//   bit 6: MB  (1=multi-byte burst)
-//   bits 5:0: register address
-#define SPI_READ            0x80
-#define SPI_MB              0x40
+// I2C addresses (selected by SDO pin: low=0x53, high=0x1D)
+#define ADXL375_ADDR_PRIMARY  0x53
+#define ADXL375_ADDR_ALT      0x1D
 
-static spi_device_handle_t s_spi = NULL;
-static gpio_num_t s_cs = GPIO_NUM_NC;
+static i2c_master_bus_handle_t s_bus = NULL;
+static i2c_master_dev_handle_t s_dev = NULL;
 
 static esp_err_t write_reg(uint8_t reg, uint8_t val)
 {
-    uint8_t tx[2] = {reg & 0x3F, val};
-    spi_transaction_t t = {
-        .length = 16,
-        .tx_buffer = tx,
-    };
-    return spi_device_polling_transmit(s_spi, &t);
+    uint8_t buf[2] = {reg, val};
+    return i2c_master_transmit(s_dev, buf, 2, -1);
 }
 
 static esp_err_t read_reg(uint8_t reg, uint8_t *data, size_t len)
 {
-    uint8_t tx[8] = {0};
-    uint8_t rx[8] = {0};
+    return i2c_master_transmit_receive(s_dev, &reg, 1, data, len, -1);
+}
 
-    tx[0] = SPI_READ | (len > 1 ? SPI_MB : 0) | (reg & 0x3F);
-
-    spi_transaction_t t = {
-        .length = (1 + len) * 8,
-        .tx_buffer = tx,
-        .rx_buffer = rx,
-    };
-    esp_err_t err = spi_device_polling_transmit(s_spi, &t);
-    if (err == ESP_OK) {
-        memcpy(data, &rx[1], len);
+static void i2c_scan(void)
+{
+    ESP_LOGI(TAG, "I2C bus scan:");
+    for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
+        if (i2c_master_probe(s_bus, addr, 50) == ESP_OK) {
+            ESP_LOGI(TAG, "  Found device at 0x%02X", addr);
+        }
     }
-    return err;
 }
 
 static bool configure_sensor(void)
@@ -105,35 +93,56 @@ static bool configure_sensor(void)
     return true;
 }
 
-bool adxl375_init_on_bus(gpio_num_t cs)
+static bool try_address(uint16_t addr)
 {
-    s_cs = cs;
-
-    spi_device_interface_config_t dev_cfg = {
-        .mode = 3,               // CPOL=1, CPHA=1
-        .clock_speed_hz = 4000000,
-        .spics_io_num = cs,
-        .queue_size = 1,
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = addr,
+        .scl_speed_hz = 400000,
     };
-    esp_err_t err = spi_bus_add_device(SPI2_HOST, &dev_cfg, &s_spi);
+
+    esp_err_t err = i2c_master_bus_add_device(s_bus, &dev_cfg, &s_dev);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "SPI device add failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "I2C add device 0x%02X failed: %s", addr, esp_err_to_name(err));
         return false;
     }
 
-    return configure_sensor();
+    if (configure_sensor()) {
+        ESP_LOGI(TAG, "ADXL375 found at I2C address 0x%02X", addr);
+        return true;
+    }
+
+    i2c_master_bus_rm_device(s_dev);
+    s_dev = NULL;
+    return false;
+}
+
+bool adxl375_init(i2c_master_bus_handle_t bus)
+{
+    s_bus = bus;
+
+    if (try_address(ADXL375_ADDR_PRIMARY)) return true;
+    if (try_address(ADXL375_ADDR_ALT)) return true;
+
+    ESP_LOGE(TAG, "ADXL375 not found at either I2C address");
+    i2c_scan();
+    return false;
 }
 
 bool adxl375_reinit(void)
 {
-    if (s_cs == GPIO_NUM_NC) return false;  // never initialized
+    if (!s_bus) return false;
 
-    if (s_spi != NULL) {
-        spi_bus_remove_device(s_spi);
-        s_spi = NULL;
+    if (s_dev) {
+        i2c_master_bus_rm_device(s_dev);
+        s_dev = NULL;
     }
 
-    return adxl375_init_on_bus(s_cs);
+    // Reset the I2C bus to recover from stuck-SDA conditions
+    i2c_master_bus_reset(s_bus);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    return adxl375_init(s_bus);
 }
 
 int adxl375_read_fifo_count(void)

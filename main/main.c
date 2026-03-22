@@ -5,12 +5,15 @@
 #include "driver/gpio.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
+#include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
 #include "nvs_flash.h"
 
+#ifdef CONFIG_FORCE4_SD_CARD
 #include "driver/spi_master.h"
+#endif
 
 #include "led.h"
 #include "adxl375.h"
@@ -27,13 +30,18 @@
 static const char *TAG = "main";
 
 // XIAO ESP32-S3 GPIO assignments
-// D10=GPIO9: boot mode (read at startup) + SPI MOSI (after adxl375_init)
-// D8=GPIO7: SCLK, D9=GPIO8: MISO, D1=GPIO2: CS, D3=GPIO4: INT1
+// I2C (STEMMA QT): SDA=GPIO5 (D4), SCL=GPIO6 (D5) — ADXL375
+// SPI (SD card):    SCLK=GPIO7 (D8), MOSI=GPIO9 (D10), MISO=GPIO8 (D9), SD_CS=GPIO21
+// INT1=GPIO4 (D3), Boot=GPIO9 (D10, read before SPI init), LED=GPIO1 (D0)
 #define GPIO_BOOT_MODE  GPIO_NUM_9
+#define GPIO_I2C_SDA    GPIO_NUM_5
+#define GPIO_I2C_SCL    GPIO_NUM_6
+
+#ifdef CONFIG_FORCE4_SD_CARD
 #define GPIO_SPI_MOSI   GPIO_NUM_9
 #define GPIO_SPI_MISO   GPIO_NUM_8
 #define GPIO_SPI_SCLK   GPIO_NUM_7
-#define GPIO_SPI_CS     GPIO_NUM_2
+#endif
 
 #define FLIGHT_TASK_STACK  4096
 #define SERIAL_TASK_STACK  4096
@@ -80,7 +88,36 @@ void app_main(void)
         ESP_LOGE(TAG, "Storage init failed!");
     }
 
-    // Initialize shared SPI bus (ADXL375 + optional SD card share SPI2_HOST)
+    // Initialize I2C bus for ADXL375
+    i2c_master_bus_config_t i2c_cfg = {
+        .i2c_port = I2C_NUM_0,
+        .sda_io_num = GPIO_I2C_SDA,
+        .scl_io_num = GPIO_I2C_SCL,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    i2c_master_bus_handle_t i2c_bus = NULL;
+    esp_err_t i2c_err = i2c_new_master_bus(&i2c_cfg, &i2c_bus);
+    if (i2c_err != ESP_OK) {
+        ESP_LOGE(TAG, "I2C bus init failed: %s", esp_err_to_name(i2c_err));
+    }
+
+    // Initialize sensor
+    bool sensor_ok = adxl375_init(i2c_bus);
+    if (!sensor_ok) {
+        ESP_LOGE(TAG, "ADXL375 init failed — will retry");
+        for (int i = 0; i < 60 && !sensor_ok; i++) {
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            sensor_ok = adxl375_reinit();
+            if (sensor_ok) {
+                ESP_LOGI(TAG, "ADXL375 connected after retry");
+            }
+        }
+    }
+
+#ifdef CONFIG_FORCE4_SD_CARD
+    // Initialize SPI bus for SD card
     spi_bus_config_t bus_cfg = {
         .mosi_io_num = GPIO_SPI_MOSI,
         .miso_io_num = GPIO_SPI_MISO,
@@ -94,20 +131,6 @@ void app_main(void)
         ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(spi_err));
     }
 
-    // Initialize sensor (bus already initialized)
-    bool sensor_ok = adxl375_init_on_bus(GPIO_SPI_CS);
-    if (!sensor_ok) {
-        ESP_LOGE(TAG, "ADXL375 init failed — will retry");
-        for (int i = 0; i < 60 && !sensor_ok; i++) {
-            vTaskDelay(pdMS_TO_TICKS(5000));
-            sensor_ok = adxl375_reinit();
-            if (sensor_ok) {
-                ESP_LOGI(TAG, "ADXL375 connected after retry");
-            }
-        }
-    }
-
-#ifdef CONFIG_FORCE4_SD_CARD
     if (!sdcard_init()) {
         ESP_LOGW(TAG, "SD card not available");
     }

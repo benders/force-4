@@ -58,7 +58,7 @@ The STEMMA QT connector brings out GPIO5 (SDA), GPIO6 (SCL), 3V3, and GND — no
 
 The XIAO ESP32-S3 Sense expansion board (camera + microSD) uses **GPIO21 as the microSD card CS pin**. This conflicts with the built-in active-low LED. The two cannot be used simultaneously.
 
-The Sense module's microSD card also uses GPIO7/8/9 (SCK/MISO/MOSI) for its SPI bus. These pins can be shared with other SPI devices (e.g., ADXL375) using ESP-IDF's `spi_bus_add_device` with separate CS pins, but GPIO21 remains a hard conflict for the LED.
+The Sense module's microSD card also uses GPIO7/8/9 (SCK/MISO/MOSI) for its SPI bus. GPIO21 remains a hard conflict with the built-in LED.
 
 **Workaround:** move the LED to an external LED on any free GPIO (e.g., D0/GPIO1), wired active-high with a current-limiting resistor. GPIO21 is then free for microSD CS.
 

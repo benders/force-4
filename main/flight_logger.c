@@ -230,8 +230,8 @@ void flight_task(void *pvParameters)
     s_flight_task_handle = xTaskGetCurrentTaskHandle();
 
     // Allocate log ring buffer from PSRAM at runtime to avoid BSS placement
-    // issues during startup (EXT_RAM_BSS_ATTR zeroing happens before USB CDC
-    // is up, making crashes invisible).
+    // issues during startup (EXT_RAM_BSS_ATTR zeroing happens before USB
+    // Serial/JTAG is up, making crashes invisible).
     s_log_ring = heap_caps_malloc(LOG_RING_SIZE * sizeof(adxl375_sample_t),
                                   MALLOC_CAP_SPIRAM);
     if (!s_log_ring) {
@@ -265,6 +265,7 @@ void flight_task(void *pvParameters)
     int launch_count = 0;
     int drop_count = 0;
     int64_t logging_start_us = 0;
+
 
     // Pre-open the ready file before the main loop so launch detection
     // needs no file-open latency.
@@ -396,7 +397,9 @@ void flight_task(void *pvParameters)
 
         case FLIGHT_STATE_LOGGING:
             {
-                // Wait for watermark interrupt (50ms timeout for safety + LED)
+                // Wait for watermark interrupt; 50ms safety timeout ensures FIFO
+                // is polled before overflow (32 samples = 40ms at 800 Hz).  The
+                // INT1 watermark interrupt wakes us well before this timeout.
                 ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(50));
 
                 float t_s = (float)(esp_timer_get_time() / 1000) / 1000.0f;

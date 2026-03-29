@@ -61,7 +61,7 @@ void app_main(void)
     usb_serial_jtag_driver_install(&usb_cfg);
     usb_serial_jtag_vfs_use_driver();
 
-    // Read boot mode from GPIO10 (internal pull-up, LOW = data mode)
+    // Read boot mode from GPIO9 (internal pull-up, LOW = data mode)
     gpio_config_t io_conf = {
         .pin_bit_mask = 1ULL << GPIO_BOOT_MODE,
         .mode = GPIO_MODE_INPUT,

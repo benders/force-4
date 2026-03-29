@@ -40,22 +40,24 @@ static const char *TAG = "adxl375";
 static i2c_master_bus_handle_t s_bus = NULL;
 static i2c_master_dev_handle_t s_dev = NULL;
 
+#define I2C_TIMEOUT_MS 100
+
 static esp_err_t write_reg(uint8_t reg, uint8_t val)
 {
     uint8_t buf[2] = {reg, val};
-    return i2c_master_transmit(s_dev, buf, 2, -1);
+    return i2c_master_transmit(s_dev, buf, 2, I2C_TIMEOUT_MS);
 }
 
 static esp_err_t read_reg(uint8_t reg, uint8_t *data, size_t len)
 {
-    return i2c_master_transmit_receive(s_dev, &reg, 1, data, len, -1);
+    return i2c_master_transmit_receive(s_dev, &reg, 1, data, len, I2C_TIMEOUT_MS);
 }
 
 static void i2c_scan(void)
 {
     ESP_LOGI(TAG, "I2C bus scan:");
     for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
-        if (i2c_master_probe(s_bus, addr, 50) == ESP_OK) {
+        if (i2c_master_probe(s_bus, addr, I2C_TIMEOUT_MS) == ESP_OK) {
             ESP_LOGI(TAG, "  Found device at 0x%02X", addr);
         }
     }

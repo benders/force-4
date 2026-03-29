@@ -16,8 +16,10 @@ Native C (ESP-IDF) rocket flight data logger. Records +-200g accelerometer data 
 | D5 (GPIO6)  | ADXL375 SCL (on breakout board)          |
 | D3 (GPIO4)  | ADXL375 INT1                             |
 | D0 (GPIO1)  | LED anode via 330Ω resistor (to GND)     |
-| 3V3         | ADXL375 VIN + CS (tie CS high for I2C)   |
+| 3V3         | ADXL375 VIN                              |
 | GND         | ADXL375 GND + SDO (tie SDO low for 0x53) |
+
+ADXL375 CS is jumpered to 3V3o on the breakout board (selects I2C mode). **Warning:** 3V3o is the onboard LDO regulator output. If the board is powered via the 3V3 pin (bypassing the LDO), 3V3o may float, leaving CS indeterminate. If the sensor fails to respond over I2C, verify CS is solidly at 3.3V with a multimeter.
 
 ## Build
 

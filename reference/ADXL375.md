@@ -6,7 +6,7 @@
 
 This project uses **I2C** (400 kHz, address 0x53). See `reference/I2C.md` for ESP-IDF driver details.
 
-- **I2C:** address 0x53 (SDO/CS pin low) or 0x1D (SDO/CS pin high), max 400 kHz. CS pin must be tied high to select I2C mode. `adxl375_init()` probes both addresses.
+- **I2C:** address 0x53 (SDO/CS pin low) or 0x1D (SDO/CS pin high), max 400 kHz. CS pin must be tied high to select I2C mode. CS is jumpered to the breakout's 3V3o pin; see `README.md` wiring table for details and risk warning. `adxl375_init()` probes both addresses.
 - **SPI (not used):** 4-wire, Mode 3 (CPOL=CPHA=1), up to 5 MHz. Requires address-byte framing with R/W (bit 7) and MB (bit 6) flags.
 
 ## Scale and output

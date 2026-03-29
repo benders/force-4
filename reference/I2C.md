@@ -14,13 +14,14 @@ Uses `driver/i2c_master.h` (not the legacy `driver/i2c.h`):
 
 - Handle types: `i2c_master_bus_handle_t` + `i2c_master_dev_handle_t`
 - Bus config: `I2C_NUM_0`, `I2C_CLK_SRC_DEFAULT`, `glitch_ignore_cnt=7`, internal pull-ups enabled
-- Device config: 400 kHz, 100 ms timeout, 3 retries per transaction
+- Device config: 400 kHz, 100 ms timeout
 - Teardown order: `i2c_master_bus_rm_device()` before `i2c_del_master_bus()`
 
 ## ADXL375 address
 
-- Default: 0x53 (SDO/CS low)
-- Alternate: 0x1D (SDO/CS high)
+- Default: 0x53 (SDO pin low — tied to GND)
+- Alternate: 0x1D (SDO pin high)
+- CS must be HIGH for I2C mode (jumpered to breakout 3V3o; see `README.md` for risk warning)
 - `adxl375_init()` probes both addresses
 
 ## Burst read
